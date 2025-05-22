@@ -10,26 +10,28 @@ The pipeline downloads and processes hourly electricity demand data from the U.S
 
 ```
 eia-data/
-├── README.md                     # This file
-├── requirements.txt              # Python dependencies
+├── README.md                    # This file
+├── requirements.txt             # Python dependencies
+├── main.py                      # Main entry point for the pipeline
 ├── .env                         # API key configuration (not in git)
-├── .env.template                # Template for API key setup
-├── .gitignore                   # Git ignore rules
-├── rethinking-load-growth-paper.pdf  # Source paper
+├── .env.template               # Template for API key setup
+├── .gitignore                  # Git ignore rules
 │
-├── src/                         # Source code
-│   ├── download_data.py         # Original download script
-│   ├── download_all_data.py    # Optimized parallel download script
-│   └── clean_data.py            # Data cleaning (to be implemented)
+├── config/                     # Configuration module
+│   ├── __init__.py
+│   └── config.py              # Central configuration settings
 │
-├── data/                        # Data directory
-│   ├── raw/                     # Raw downloaded data
-│   │   ├── PJM/                 # Data for each BA organized by folders
-│   │   ├── MISO/
-│   │   └── ...
-│   └── processed/               # Cleaned data (to be created)
+├── src/                        # Source code modules
+│   ├── __init__.py
+│   ├── EIADataFetcher.py      # Production data fetching module
+│   ├── download_eia_data.py   # Consolidated download script
+│   ├── test_eia_api.py       # API testing suite
+│   └── utils.py              # Utility functions
 │
-└── test_*.py                    # Various test scripts for API testing
+└── data/                       # Data directory
+    ├── raw/                    # Raw downloaded data
+    ├── processed/              # Cleaned data (to be created)
+    └── output/                 # Analysis results (to be created)
 ```
 
 ## Setup
@@ -43,70 +45,132 @@ eia-data/
    - Register for a free API key at: https://www.eia.gov/opendata/register.php
    - Copy `.env.template` to `.env` and add your API key
 
-3. **Download Data**
+3. **Test the Setup**
    ```bash
-   python src/download_all_data.py
+   # Quick test - downloads 3 months of PJM data by default
+   python src/download_eia_data.py
    ```
 
-## Data Pipeline Components
+## Data Download Options
 
-### 1. Data Download (`src/download_all_data.py`)
+The `download_eia_data.py` script provides flexible download options:
 
-Downloads hourly demand data from the EIA API v2 for 22 balancing authorities:
-- **RTOs/ISOs**: PJM, MISO, ERCOT (ERCO), SPP (SWPP), CAISO (CISO), ISO-NE (ISNE), NYISO (NYIS)
-- **Utilities**: Southern Company (SOCO), Duke Energy (DUK, CPLE, FPC), TVA, Bonneville (BPAT)
-- **Others**: AZPS, FPL, PACE, PACW, PGE, PSCO, SRP, DESC (SCEG), SCP (SC)
+### Quick Test (Default)
+```bash
+# Downloads 3 months of PJM data to verify API connection
+python src/download_eia_data.py
+```
 
-The script:
-- Uses the EIA API v2 endpoint: `/electricity/rto/region-data/data/`
-- Downloads hourly demand data (type='D') for 2016-2024
-- Implements parallel downloading with rate limiting
-- Saves data as CSV files organized by BA and year
+### Download Specific BAs and Date Range
+```bash
+# Download specific BAs for a custom date range
+python src/download_eia_data.py --bas PJM MISO ERCOT --start 2023-01-01 --end 2023-12-31
+```
 
-### 2. Data Cleaning (To Be Implemented)
+### Download All Data
+```bash
+# Download all BAs for full date range (2016-2024) - takes several hours
+python src/download_eia_data.py --all
 
-Based on Appendix B of the paper, the cleaning process will:
-- Normalize date-time formats
-- Handle missing/zero values with linear interpolation
-- Identify and correct outliers and spikes
-- Map BA labels to standard acronyms
-- Validate against FERC forecasted peaks
+# Download all data using parallel processing (faster)
+python src/download_eia_data.py --all --parallel --workers 5
+```
 
-### 3. Analysis (To Be Implemented)
+### Download Specific Years
+```bash
+# Download specific years for all BAs
+python src/download_eia_data.py --years 2022 2023 2024
 
-Calculate curtailment-enabled headroom following the paper's methodology:
-- Determine seasonal peak thresholds
-- Apply curtailment goal-seek function
-- Generate results showing potential new load integration
+# Download specific years for specific BAs
+python src/download_eia_data.py --bas PJM MISO --years 2023 2024
+```
 
-## Balancing Authority Mappings
+### Additional Options
+- `--output DIR`: Specify output directory (default: data/raw)
+- `--skip-existing`: Skip files that already exist
+- `--parallel`: Use parallel downloading
+- `--workers N`: Number of parallel workers (default: 3)
 
-The EIA uses different codes than the paper. Key mappings:
-- CPLE → DEP (Duke Energy Progress East)
-- DUK → DEC (Duke Energy Carolinas)
-- SC → SCP (Santee Cooper)
-- SWPP → SPP (Southwest Power Pool)
-- SCEG → DESC (Dominion Energy South Carolina)
-- FPC → DEF (Duke Energy Florida)
-- CISO → CAISO (California ISO)
-- BPAT → BPA (Bonneville Power Administration)
-- NYIS → NYISO (New York ISO)
-- ERCO → ERCOT (Texas)
-- ISNE → ISO-NE (New England)
+## Pipeline Execution
 
-## API Notes
+```bash
+# Run complete pipeline (when fully implemented)
+python main.py --all
 
-- The EIA API v2 requires authentication via API key
-- Rate limits: Be respectful with request frequency
-- Data is returned in JSON format with pagination (5000 records max per request)
-- Hourly data uses UTC timestamps
+# Or run individual steps
+python main.py --fetch    # Download data using EIADataFetcher
+python main.py --clean    # Clean data (to be implemented)
+python main.py --analyze  # Analyze curtailment potential (to be implemented)
+```
 
-## Next Steps
+## Current Implementation Status
 
-1. Implement data cleaning pipeline following Appendix B specifications
-2. Add analysis code to calculate curtailment-enabled headroom
-3. Generate visualizations matching the paper's figures
-4. Add validation against paper's results
+### ✅ Implemented
+
+1. **Configuration (`config/config.py`)**
+   - Central configuration for API settings, BA list, date ranges
+   - Data paths and cleaning parameters
+
+2. **Data Fetching**
+   - **`EIADataFetcher.py`**: Production module with OOP design, used by main.py
+   - **`download_eia_data.py`**: Flexible standalone script with multiple download options
+   - Supports both sequential and parallel downloading
+   - Automatic pagination and rate limiting
+
+3. **Testing (`test_eia_api.py`)**
+   - Comprehensive API testing suite
+   - Tests connectivity, endpoints, regions
+   - Useful for debugging API issues
+
+4. **Utilities (`utils.py`)**
+   - Helper functions for logging and validation
+
+### 🚧 To Be Implemented
+
+1. **Data Cleaning** - Following Appendix B specifications:
+   - Date normalization
+   - Missing value interpolation
+   - Outlier detection and correction
+   - BA label standardization
+   - Peak validation
+
+2. **Curtailment Analysis** - Following paper methodology:
+   - Seasonal peak threshold determination
+   - Curtailment goal-seek function
+   - Load integration potential calculations
+
+## Balancing Authorities
+
+The pipeline processes data for 22 major balancing authorities:
+
+**RTOs/ISOs:**
+- PJM, MISO, ERCOT (ERCO), SPP (SWPP), CAISO (CISO), ISO-NE (ISNE), NYISO (NYIS)
+
+**Utilities:**
+- Southern Company (SOCO)
+- Duke Energy (DEC/DUK, DEP/CPLE, DEF/FPC)
+- TVA, BPA (BPAT)
+- AZPS, FPL
+- PacifiCorp (PACE, PACW)
+- PGE, PSCO, SRP
+- DESC (SCEG), SCP (SC)
+
+*Note: Codes in parentheses are EIA API codes that differ from paper notation*
+
+## Data Format
+
+Raw data files are saved as CSV with columns:
+- `period`: Timestamp (UTC)
+- `respondent`: BA code
+- `respondent-name`: Full BA name
+- `type`: Data type (D=Demand)
+- `type-name`: "Demand"
+- `value`: Demand in megawatthours
+- `value-units`: "megawatthours"
+
+## Debugging
+
+A VSCode launch configuration is provided in `.vscode/launch.json` for debugging the main control flow and data download scripts.
 
 ## References
 

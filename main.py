@@ -7,7 +7,7 @@ import os
 import sys
 from datetime import datetime
 
-from src.data_fetcher import EIADataFetcher
+from src.EIADataFetcher import EIADataFetcher
 from src.data_cleaner import DataCleaner
 from src.curtailment_analyzer import CurtailmentAnalyzer
 from src.utils import setup_logging, validate_date_range, create_summary_report
