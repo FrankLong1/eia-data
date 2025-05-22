@@ -1,8 +1,9 @@
 # Environment variables
 .env
 
-*.pdf
+
 *.png
+*.pdf
 
 # Python
 __pycache__/

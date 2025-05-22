@@ -100,7 +100,7 @@ def check_api_key():
         return False
 
 
-def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_folders=False):
+def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_folders=False, skip_existing=False):
     """
     Download hourly demand data for a specific balancing authority
     
@@ -110,10 +110,26 @@ def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_fol
         end_date (str): End date in YYYY-MM-DD format
         output_dir (str): Directory to save the data
         use_ba_folders (bool): Whether to create subfolders for each BA
+        skip_existing (bool): Whether to skip downloading if file already exists
     
     Returns:
         pd.DataFrame or None: Downloaded data as DataFrame if successful, None if failed
     """
+    
+    # Determine output file path first to check if it exists
+    if use_ba_folders:
+        save_dir = os.path.join(output_dir, ba)
+        filename = f"{ba}_{start_date}_{end_date}_hourly_demand.csv"
+    else:
+        save_dir = output_dir
+        filename = f"{get_eia_respondent_name(ba)}_hourly_demand.csv"
+    
+    output_file = os.path.join(save_dir, filename)
+    
+    # Check if file already exists and skip if requested
+    if skip_existing and os.path.exists(output_file):
+        logging.info(f"File already exists, skipping: {output_file}")
+        return pd.read_csv(output_file)  # Return existing data
     
     # API request parameters
     params = {
@@ -177,17 +193,8 @@ def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_fol
         time.sleep(0.1)
     
     if all_data: # if we got any data back, save it to a csv file
-        # Determine output file path based on folder structure preference
-        if use_ba_folders:
-            save_dir = os.path.join(output_dir, ba)
-            os.makedirs(save_dir, exist_ok=True)
-            filename = f"{ba}_{start_date}_{end_date}_hourly_demand.csv"
-        else:
-            save_dir = output_dir
-            os.makedirs(save_dir, exist_ok=True)
-            filename = f"{get_eia_respondent_name(ba)}_hourly_demand.csv"
-        
-        output_file = os.path.join(save_dir, filename)
+        # Create directory if it doesn't exist
+        os.makedirs(save_dir, exist_ok=True)
         
         # Convert data to DataFrame and save as CSV
         df = pd.DataFrame(all_data)
@@ -200,7 +207,7 @@ def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_fol
         return None
 
 
-def download_ba_year_data(ba, year, output_dir='data/raw'):
+def download_ba_year_data(ba, year, output_dir='data/raw', skip_existing=False):
     """
     Download one year of data for a specific BA (for parallel processing)
     
@@ -208,16 +215,17 @@ def download_ba_year_data(ba, year, output_dir='data/raw'):
         ba (str): Balancing authority code
         year (int): Year to download
         output_dir (str): Directory to save the data
+        skip_existing (bool): Whether to skip downloading if file already exists
     
     Returns:
         pd.DataFrame or None: Downloaded data as DataFrame if successful, None if failed
     """
     start_date = f"{year}-01-01"
     end_date = f"{year}-12-31"
-    return download_ba_data(ba, start_date, end_date, output_dir, use_ba_folders=True)
+    return download_ba_data(ba, start_date, end_date, output_dir, use_ba_folders=True, skip_existing=skip_existing)
 
 
-def download_all_parallel(bas=None, start_year=2016, end_year=2024, output_dir='data/raw', max_workers=3):
+def download_all_parallel(bas=None, start_year=2016, end_year=2024, output_dir='data/raw', max_workers=3, skip_existing=False):
     """
     Download data using parallel processing by BA-year combinations
     
@@ -227,6 +235,7 @@ def download_all_parallel(bas=None, start_year=2016, end_year=2024, output_dir='
         end_year (int): End year for download
         output_dir (str): Directory to save the data
         max_workers (int): Maximum number of parallel workers
+        skip_existing (bool): Whether to skip downloading if file already exists
     """
     
     # Use all BAs if none specified
@@ -244,7 +253,7 @@ def download_all_parallel(bas=None, start_year=2016, end_year=2024, output_dir='
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all download tasks
         future_to_task = {
-            executor.submit(download_ba_year_data, ba, year, output_dir): (ba, year) 
+            executor.submit(download_ba_year_data, ba, year, output_dir, skip_existing): (ba, year) 
             for ba, year in tasks
         }
         
@@ -366,11 +375,11 @@ def main():
         
         if args.parallel:
             # Parallel download mode
-            download_all_parallel(bas, 2016, 2024, args.output, args.workers)
+            download_all_parallel(bas, 2016, 2024, args.output, args.workers, args.skip_existing)
         else:
             # Sequential download mode
             for ba in tqdm(bas, desc="Downloading BAs"):
-                download_ba_data(ba, start_date, end_date, args.output)
+                download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
                 time.sleep(1)  # Rate limiting between BAs
                 
     # Scenario 2: Download specific years (--years flag)
@@ -381,14 +390,14 @@ def main():
         if args.parallel:
             # Parallel download for each year
             for year in args.years:
-                download_all_parallel(bas, year, year, args.output, args.workers)
+                download_all_parallel(bas, year, year, args.output, args.workers, args.skip_existing)
         else:
             # Sequential download year by year
             for year in args.years:
                 start_date = f"{year}-01-01"
                 end_date = f"{year}-12-31"
                 for ba in tqdm(bas, desc=f"Downloading {year}"):
-                    download_ba_data(ba, start_date, end_date, args.output)
+                    download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
                     time.sleep(1)  # Rate limiting
                     
     # Scenario 3: Custom date range (--start and --end flags)
@@ -401,7 +410,7 @@ def main():
         
         # Sequential download for custom date range
         for ba in tqdm(bas, desc="Downloading"):
-            download_ba_data(ba, start_date, end_date, args.output)
+            download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
             if len(bas) > 1:
                 time.sleep(1)  # Rate limiting between BAs
                 
