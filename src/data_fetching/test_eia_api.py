@@ -1,6 +1,19 @@
 """
-Consolidated test script for EIA API functionality.
-This module contains various test functions to verify and explore the EIA API endpoints.
+EIA API Testing and Debugging Suite
+
+This is a DIAGNOSTIC TOOL for testing and debugging the EIA API connection.
+It does NOT download data for analysis - use download_eia_data.py for that.
+
+Use this script when:
+- You're having trouble connecting to the API
+- You want to explore available endpoints
+- You need to debug API responses
+- You want to test API performance/rate limits
+
+Usage:
+    python test_eia_api.py
+
+This will run a comprehensive test suite and show detailed debug information.
 """
 
 import requests

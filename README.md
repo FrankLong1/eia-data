@@ -23,10 +23,18 @@ eia-data/
 │
 ├── src/                        # Source code modules
 │   ├── __init__.py
-│   ├── EIADataFetcher.py      # Production data fetching module
-│   ├── download_eia_data.py   # Consolidated download script
-│   ├── test_eia_api.py       # API testing suite
-│   └── utils.py              # Utility functions
+│   ├── utils.py               # Common utility functions
+│   ├── data_fetching/         # Data fetching modules
+│   │   ├── __init__.py
+│   │   ├── EIADataFetcher.py     # Production data fetching class
+│   │   ├── download_eia_data.py  # Command-line download script
+│   │   └── test_eia_api.py       # API testing and debugging
+│   ├── data_processing/       # Data cleaning and processing (to be implemented)
+│   │   └── __init__.py
+│   ├── data_analysis/         # Analysis modules (to be implemented)
+│   │   └── __init__.py
+│   └── data_viz/              # Visualization modules (to be implemented)
+│       └── __init__.py
 │
 └── data/                       # Data directory
     ├── raw/                    # Raw downloaded data
@@ -47,42 +55,42 @@ eia-data/
 
 3. **Test the Setup**
    ```bash
-   # Quick test - downloads 3 months of PJM data by default
-   python src/download_eia_data.py
+   # Quick test - download 3 months of PJM data
+   python src/data_fetching/download_eia_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
    ```
 
 ## Data Download Options
 
 The `download_eia_data.py` script provides flexible download options:
 
-### Quick Test (Default)
+### Quick Test
 ```bash
-# Downloads 3 months of PJM data to verify API connection
-python src/download_eia_data.py
+# Download 3 months of PJM data to verify API connection
+python src/data_fetching/download_eia_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
 ```
 
 ### Download Specific BAs and Date Range
 ```bash
 # Download specific BAs for a custom date range
-python src/download_eia_data.py --bas PJM MISO ERCOT --start 2023-01-01 --end 2023-12-31
+python src/data_fetching/download_eia_data.py --bas PJM MISO ERCOT --start 2023-01-01 --end 2023-12-31
 ```
 
 ### Download All Data
 ```bash
 # Download all BAs for full date range (2016-2024) - takes several hours
-python src/download_eia_data.py --all
+python src/data_fetching/download_eia_data.py --all
 
 # Download all data using parallel processing (faster)
-python src/download_eia_data.py --all --parallel --workers 5
+python src/data_fetching/download_eia_data.py --all --parallel --workers 5
 ```
 
 ### Download Specific Years
 ```bash
 # Download specific years for all BAs
-python src/download_eia_data.py --years 2022 2023 2024
+python src/data_fetching/download_eia_data.py --years 2022 2023 2024
 
 # Download specific years for specific BAs
-python src/download_eia_data.py --bas PJM MISO --years 2023 2024
+python src/data_fetching/download_eia_data.py --bas PJM MISO --years 2023 2024
 ```
 
 ### Additional Options
@@ -117,10 +125,11 @@ python main.py --analyze  # Analyze curtailment potential (to be implemented)
    - Supports both sequential and parallel downloading
    - Automatic pagination and rate limiting
 
-3. **Testing (`test_eia_api.py`)**
-   - Comprehensive API testing suite
-   - Tests connectivity, endpoints, regions
-   - Useful for debugging API issues
+3. **API Diagnostics (`src/data_fetching/test_eia_api.py`)**
+   - Diagnostic tool for debugging API issues (NOT for downloading data)
+   - Tests connectivity, explores endpoints, checks performance
+   - Use when troubleshooting connection problems
+   - Run with: `python src/data_fetching/test_eia_api.py`
 
 4. **Utilities (`utils.py`)**
    - Helper functions for logging and validation
