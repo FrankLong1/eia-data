@@ -178,8 +178,7 @@ def clean_eia_data(
     low_outlier_threshold_factor: float = 0.1,
     spike_window_size: int = 3,
     spike_threshold_factor: float = 3.0,
-    peak_threshold_factor: float = 2.0,
-    perform_validation: bool = False
+    peak_threshold_factor: float = 2.0
 ) -> pd.DataFrame:
     """
     Main cleaning pipeline for EIA electricity demand data.
@@ -204,7 +203,6 @@ def clean_eia_data(
         spike_window_size: Rolling window size for spike detection
         spike_threshold_factor: Std dev threshold for spikes
         peak_threshold_factor: Multiple of max for peak detection
-        perform_validation: Whether to log detailed progress
         
     Returns:
         Cleaned DataFrame with 'Unified Demand' column
@@ -214,8 +212,7 @@ def clean_eia_data(
     # Step 1: Normalize datetime
     if datetime_col in df.columns:
         df = normalize_datetime(df, datetime_col)
-        if perform_validation:
-            logging.info(f"Normalized datetime column: {datetime_col}")
+        logging.info(f"Normalized datetime column: {datetime_col}")
     
     # Step 2: Create unified demand
     df = select_demand_value(df, demand_col_primary, adj_demand_col_name)
@@ -224,48 +221,43 @@ def clean_eia_data(
         logging.error("Failed to create Unified Demand column. Check input columns.")
         return df
     
-    if perform_validation:
-        logging.info("Created Unified Demand column")
+    logging.info("Created Unified Demand column")
     
     # Step 3: Map BA labels
     if ba_col in df.columns:
         df = map_ba_labels(df, ba_col)
-        if perform_validation:
-            logging.info(f"Mapped BA labels in column: {ba_col}")
+        logging.info(f"Mapped BA labels in column: {ba_col}")
     
     # Track cleaning progress
-    if perform_validation:
-        initial_nans = df["Unified Demand"].isna().sum()
-        initial_zeros = (df["Unified Demand"] == 0).sum()
+    initial_nans = df["Unified Demand"].isna().sum()
+    initial_zeros = (df["Unified Demand"] == 0).sum()
     
     # Step 4: Interpolate missing/zero values
     columns_to_interpolate = interp_cols_user or ["Unified Demand"]
     df = fill_missing_zeros_linear_interpolation(df, columns_to_interpolate)
     
-    if perform_validation:
-        current_nans = df["Unified Demand"].isna().sum()
-        filled = (initial_nans + initial_zeros) - current_nans
-        logging.info(f"Filled {filled} missing/zero values via interpolation")
+    # Tracks the number of missing/zero values filled via interpolation
+    current_nans = df["Unified Demand"].isna().sum()
+    filled = (initial_nans + initial_zeros) - current_nans
+    logging.info(f"Filled {filled} missing/zero values via interpolation")
     
-    # Steps 5-7 require BA column
     if ba_col not in df.columns:
         logging.warning(f"BA column '{ba_col}' not found. Skipping BA-specific cleaning.")
     else:
         # Step 5: Remove low outliers
         if datetime_col in df.columns:
-            pre_outlier = df["Unified Demand"].copy() if perform_validation else None
+            pre_outlier = df["Unified Demand"].copy()
             
             df = impute_low_outliers(
                 df, "Unified Demand", ba_col, datetime_col, 
                 threshold_factor=low_outlier_threshold_factor
             )
             
-            if perform_validation and pre_outlier is not None:
-                changed = (pre_outlier != df["Unified Demand"]).sum()
-                logging.info(f"Imputed {changed} low outliers")
+            changed = (pre_outlier != df["Unified Demand"]).sum()
+            logging.info(f"Imputed {changed} low outliers")
         
         # Step 6: Smooth spikes
-        pre_spike = df["Unified Demand"].copy() if perform_validation else None
+        pre_spike = df["Unified Demand"].copy()
         
         df = correct_demand_spikes(
             df, "Unified Demand", ba_col,
@@ -273,33 +265,30 @@ def clean_eia_data(
             threshold_factor=spike_threshold_factor
         )
         
-        if perform_validation and pre_spike is not None:
-            changed = (pre_spike != df["Unified Demand"]).sum()
-            logging.info(f"Smoothed {changed} demand spikes")
+        changed = (pre_spike != df["Unified Demand"]).sum()
+        logging.info(f"Smoothed {changed} demand spikes")
         
         # Step 7: Remove extreme peaks
-        pre_peak = df["Unified Demand"].copy() if perform_validation else None
+        pre_peak = df["Unified Demand"].copy()
         
         df = handle_erroneous_peaks(
             df, "Unified Demand", ba_col,
             peak_threshold_factor=peak_threshold_factor
         )
         
-        if perform_validation and pre_peak is not None:
-            changed = (pre_peak != df["Unified Demand"]).sum()
-            logging.info(f"Removed {changed} extreme peaks")
+        changed = (pre_peak != df["Unified Demand"]).sum()
+        logging.info(f"Removed {changed} extreme peaks")
     
     # Log summary statistics
-    if perform_validation:
-        if ba_col in df.columns:
-            logging.info("Summary statistics by BA:")
-            summary = df.groupby(ba_col)["Unified Demand"].agg(['min', 'max', 'mean', 'count'])
-            for ba, stats in summary.iterrows():
-                logging.info(f"  {ba}: min={stats['min']:.0f}, max={stats['max']:.0f}, "
-                           f"mean={stats['mean']:.0f}, count={stats['count']}")
-        else:
-            stats = df["Unified Demand"].agg(['min', 'max', 'mean', 'count'])
-            logging.info(f"Global stats: min={stats['min']:.0f}, max={stats['max']:.0f}, "
+    if ba_col in df.columns:
+        logging.info("Summary statistics by BA:")
+        summary = df.groupby(ba_col)["Unified Demand"].agg(['min', 'max', 'mean', 'count'])
+        for ba, stats in summary.iterrows():
+            logging.info(f"  {ba}: min={stats['min']:.0f}, max={stats['max']:.0f}, "
                        f"mean={stats['mean']:.0f}, count={stats['count']}")
+    else:
+        stats = df["Unified Demand"].agg(['min', 'max', 'mean', 'count'])
+        logging.info(f"Global stats: min={stats['min']:.0f}, max={stats['max']:.0f}, "
+                   f"mean={stats['mean']:.0f}, count={stats['count']}")
     
     return df

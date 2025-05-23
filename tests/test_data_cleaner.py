@@ -572,8 +572,7 @@ def test_clean_eia_data_full_run(raw_eia_df):
         datetime_col='Timestamp',
         demand_col_primary='Demand',
         adj_demand_col_name='Adjusted demand',
-        ba_col='Balancing Authority',
-        perform_validation=False # Keep logs clean for this basic check
+        ba_col='Balancing Authority'
     )
     
     # Basic checks:
@@ -613,7 +612,7 @@ def test_clean_eia_data_full_run(raw_eia_df):
 
 def test_clean_eia_data_with_validation_logging(raw_eia_df, caplog):
     caplog.set_level(logging.INFO)
-    _ = clean_eia_data(raw_eia_df.copy(), perform_validation=True)
+    _ = clean_eia_data(raw_eia_df.copy())
     
     # Check for some expected log messages
     assert "Normalized datetime column: Timestamp" in caplog.text
@@ -632,8 +631,7 @@ def test_clean_eia_data_no_adjusted_demand(raw_eia_df_no_adj_demand):
     df_cleaned = clean_eia_data(
         raw_eia_df_no_adj_demand.copy(),
         demand_col_primary='Demand',
-        adj_demand_col_name='Adjusted demand', # This col doesn't exist in this fixture
-        perform_validation=False
+        adj_demand_col_name='Adjusted demand' # This col doesn't exist in this fixture
     )
     assert 'Unified Demand' in df_cleaned.columns
     # The data undergoes cleaning, so we can't expect exact matches
@@ -664,8 +662,7 @@ def test_clean_eia_data_specific_outlier_scenario():
         ba_col='Balancing Authority',
         low_outlier_threshold_factor=0.05, # Ensure 1 is an outlier (mean of others ~90-100, 0.05*90 = 4.5. 1 < 4.5)
         spike_threshold_factor=1.0, # To catch 500
-        peak_threshold_factor=2.0, # To catch 10000 (relative to non-peak max)
-        perform_validation=True # Enable logging to see actions
+        peak_threshold_factor=2.0 # To catch 10000 (relative to non-peak max)
     )
 
     # The value '1' should be imputed
@@ -678,7 +675,7 @@ def test_clean_eia_data_specific_outlier_scenario():
     # The spike '500' should be corrected
     # Data for spike correction (approx): [100,100,105,500,90,95,10000]
     # Rolling mean for 500: (105+500+90)/3 = 231.66. It should be replaced by this.
-    assert cleaned_df.loc[3, 'Unified Demand'] < 500.0 
+    assert cleaned_df.loc[3, 'Unified Demand'] < 500.0
     assert abs(cleaned_df.loc[3, 'Unified Demand'] - ((105+500+90)/3.0)) < 1 # Check if close to expected rolling mean
 
     # The peak '10000' - its handling depends on the flawed `transform('max')` logic in `handle_erroneous_peaks`.
@@ -693,10 +690,12 @@ def test_clean_eia_data_specific_outlier_scenario():
     # Test with factor < 1 to see if 10000 is handled
     cleaned_df_factor_lt_1 = clean_eia_data(
         df.copy(),
-        demand_col_primary='Demand', adj_demand_col_name='Adjusted demand', ba_col='Balancing Authority',
-        low_outlier_threshold_factor=0.05, spike_threshold_factor=1.0, 
-        peak_threshold_factor=0.5, # This will mark 10000 as peak
-        perform_validation=False
+        demand_col_primary='Demand', 
+        adj_demand_col_name='Adjusted demand', 
+        ba_col='Balancing Authority',
+        low_outlier_threshold_factor=0.05, 
+        spike_threshold_factor=1.0, 
+        peak_threshold_factor=0.5 # This will mark 10000 as peak
     )
     # After 10000 is NaN, it's at the end. Interpolation with limit_direction='both' means it takes previous value (95).
     # Original (after low outlier and spike): [100,100,105,231.66,90,95,10000]

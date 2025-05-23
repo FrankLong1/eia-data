@@ -99,7 +99,7 @@ def check_api_key():
         return False
 
 
-def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_folders=False, skip_existing=False):
+def download_ba_data(ba, start_date, end_date, output_dir='data/raw', skip_existing=False):
     """
     Download hourly demand data for a specific balancing authority
     
@@ -108,21 +108,15 @@ def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_fol
         start_date (str): Start date in YYYY-MM-DD format
         end_date (str): End date in YYYY-MM-DD format
         output_dir (str): Directory to save the data
-        use_ba_folders (bool): Whether to create subfolders for each BA
         skip_existing (bool): Whether to skip downloading if file already exists
     
     Returns:
         pd.DataFrame or None: Downloaded data as DataFrame if successful, None if failed
     """
     
-    # Determine output file path first to check if it exists
-    if use_ba_folders:
-        save_dir = os.path.join(output_dir, ba)
-        filename = f"{ba}_{start_date}_{end_date}_hourly_demand.csv"
-    else:
-        save_dir = output_dir
-        filename = f"{get_eia_respondent_name(ba)}_hourly_demand.csv"
-    
+    # Always use BA folders for organization
+    save_dir = os.path.join(output_dir, ba)
+    filename = f"{ba}_{start_date}_{end_date}_hourly_demand.csv"
     output_file = os.path.join(save_dir, filename)
     
     # Check if file already exists and skip if requested
@@ -177,11 +171,10 @@ def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_fol
             
         # ===== PROCESS VALID DATA =====
         # Add all records from this page to our collection
-        # Using extend() to flatten the list of records into individual items
         all_data.extend(records)
         
         # ===== CHECK PAGINATION =====
-        # If we got fewer than max records, we've reached the last page, otherwise, move to the next page for the next API call
+        # If we got fewer than max records, we've reached the last page
         if len(records) < 5000:
             logging.info(f"Reached last page for {ba} (received {len(records)} records)")
             break
