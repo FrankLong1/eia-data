@@ -3,7 +3,7 @@
 Consolidated EIA data download script with flexible options.
 
 Requires explicit parameters - no default download behavior.
-Options available for bulk download, parallel processing, and custom date ranges.
+Options available for bulk download and custom date ranges.
 """
 
 # Standard library imports
@@ -16,7 +16,6 @@ import time  # For rate limiting and delays
 from tqdm import tqdm  # For progress bars
 import json  # For handling JSON responses
 from dotenv import load_dotenv  # For loading environment variables
-from concurrent.futures import ThreadPoolExecutor, as_completed  # For parallel processing
 import logging  # For logging operations
 
 # Configure logging with timestamp, level, and message format
@@ -207,85 +206,6 @@ def download_ba_data(ba, start_date, end_date, output_dir='data/raw', use_ba_fol
         return None
 
 
-def download_ba_year_data(ba, year, output_dir='data/raw', skip_existing=False):
-    """
-    Download one year of data for a specific BA (for parallel processing)
-    
-    Args:
-        ba (str): Balancing authority code
-        year (int): Year to download
-        output_dir (str): Directory to save the data
-        skip_existing (bool): Whether to skip downloading if file already exists
-    
-    Returns:
-        pd.DataFrame or None: Downloaded data as DataFrame if successful, None if failed
-    """
-    start_date = f"{year}-01-01"
-    end_date = f"{year}-12-31"
-    return download_ba_data(ba, start_date, end_date, output_dir, use_ba_folders=True, skip_existing=skip_existing)
-
-
-def download_all_parallel(bas=None, start_year=2016, end_year=2024, output_dir='data/raw', max_workers=3, skip_existing=False):
-    """
-    Download data using parallel processing by BA-year combinations
-    
-    Args:
-        bas (list): List of balancing authorities to download
-        start_year (int): Start year for download
-        end_year (int): End year for download
-        output_dir (str): Directory to save the data
-        max_workers (int): Maximum number of parallel workers
-        skip_existing (bool): Whether to skip downloading if file already exists
-    """
-    
-    # Use all BAs if none specified
-    if bas is None:
-        bas = BALANCING_AUTHORITIES
-    
-    # Generate list of all BA-year combinations
-    years = list(range(start_year, end_year + 1))
-    tasks = [(ba, year) for ba in bas for year in years]
-    
-    completed = 0
-    failed = []
-    
-    # Use ThreadPoolExecutor for parallel downloads
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all download tasks
-        future_to_task = {
-            executor.submit(download_ba_year_data, ba, year, output_dir, skip_existing): (ba, year) 
-            for ba, year in tasks
-        }
-        
-        # Process completed tasks with progress bar
-        with tqdm(total=len(tasks), desc="Downloading data") as pbar:
-            for future in as_completed(future_to_task):
-                ba, year = future_to_task[future]
-                
-                try:
-                    result = future.result()
-                    if result is not None:
-                        completed += 1
-                    else:
-                        failed.append((ba, year))
-                except Exception as e:
-                    failed.append((ba, year))
-                    logging.error(f"Failed to process {ba} {year}: {e}")
-                
-                pbar.update(1)
-    
-    # Print summary of download results
-    print(f"\nDownload complete!")
-    print(f"Successfully downloaded: {completed}/{len(tasks)}")
-    
-    if failed:
-        print(f"\nFailed downloads ({len(failed)}):")
-        for ba, year in failed[:10]:  # Show first 10 failures
-            print(f"  - {ba} {year}")
-        if len(failed) > 10:
-            print(f"  ... and {len(failed) - 10} more")
-
-
 def parse_arguments():
     """
     Parse command line arguments
@@ -307,14 +227,11 @@ Examples:
   # Download all data for all BAs (2016-2024)
   python download_eia_data.py --all
   
-  # Download all data using parallel processing
-  python download_eia_data.py --all --parallel --workers 5
-  
   # Download specific years
   python download_eia_data.py --years 2022 2023 2024
   
-  # Download specific years for specific BAs with parallel processing
-  python download_eia_data.py --bas PJM MISO --years 2023 2024 --parallel
+  # Download specific years for specific BAs
+  python download_eia_data.py --bas PJM MISO --years 2023 2024
         """
     )
     
@@ -331,12 +248,6 @@ Examples:
                        help='Specific BA codes to download (e.g., --bas PJM MISO ERCOT)')
     parser.add_argument('--all', action='store_true', 
                        help='Download ALL 22 BAs for full date range (2016-2024)')
-    
-    # Processing options
-    parser.add_argument('--parallel', action='store_true', 
-                       help='Use parallel downloading (faster but more API-intensive)')
-    parser.add_argument('--workers', type=int, default=3, 
-                       help='Number of parallel download threads (default: 3, max recommended: 5)')
     
     # Output options
     parser.add_argument('--output', type=str, default='data/raw', 
@@ -373,32 +284,23 @@ def main():
         end_date = '2024-12-31'
         print(f"Downloading ALL data: {len(bas)} BAs from {start_date} to {end_date}")
         
-        if args.parallel:
-            # Parallel download mode
-            download_all_parallel(bas, 2016, 2024, args.output, args.workers, args.skip_existing)
-        else:
-            # Sequential download mode
-            for ba in tqdm(bas, desc="Downloading BAs"):
-                download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
-                time.sleep(1)  # Rate limiting between BAs
+        # Sequential download mode
+        for ba in tqdm(bas, desc="Downloading BAs"):
+            download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
+            time.sleep(1)  # Rate limiting between BAs
                 
     # Scenario 2: Download specific years (--years flag)
     elif args.years:
         bas = args.bas if args.bas else BALANCING_AUTHORITIES
         print(f"Downloading {len(bas)} BAs for years: {args.years}")
         
-        if args.parallel:
-            # Parallel download for each year
-            for year in args.years:
-                download_all_parallel(bas, year, year, args.output, args.workers, args.skip_existing)
-        else:
-            # Sequential download year by year
-            for year in args.years:
-                start_date = f"{year}-01-01"
-                end_date = f"{year}-12-31"
-                for ba in tqdm(bas, desc=f"Downloading {year}"):
-                    download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
-                    time.sleep(1)  # Rate limiting
+        # Sequential download year by year
+        for year in args.years:
+            start_date = f"{year}-01-01"
+            end_date = f"{year}-12-31"
+            for ba in tqdm(bas, desc=f"Downloading {year}"):
+                download_ba_data(ba, start_date, end_date, args.output, skip_existing=args.skip_existing)
+                time.sleep(1)  # Rate limiting
                     
     # Scenario 3: Custom date range (--start and --end flags)
     elif args.start and args.end:
