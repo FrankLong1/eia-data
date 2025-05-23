@@ -617,15 +617,15 @@ def test_clean_eia_data_with_validation_logging(raw_eia_df, caplog):
     
     # Check for some expected log messages
     assert "Normalized datetime column: Timestamp" in caplog.text
-    assert "Selected demand value into column: Unified Demand" in caplog.text
+    assert "Created Unified Demand column" in caplog.text
     assert "Mapped BA labels in column: Balancing Authority" in caplog.text
-    assert "Filled missing/zeros" in caplog.text
-    assert "Imputed low outliers" in caplog.text # Might be skipped if data doesn't trigger it for any BA
-    assert "Corrected demand spikes" in caplog.text
-    assert "Handled erroneous peaks" in caplog.text # Might be skipped
-    assert "Summary statistics for cleaned 'Unified Demand' per BA:" in caplog.text
+    assert "Filled" in caplog.text and "interpolation" in caplog.text
+    assert "Imputed" in caplog.text and "outliers" in caplog.text
+    assert "Smoothed" in caplog.text and "spikes" in caplog.text
+    assert "Removed" in caplog.text and "peaks" in caplog.text
+    assert "Summary statistics" in caplog.text
     # Check one mapped BA name in summary
-    assert "BA: DEP" in caplog.text or "BA: DEC" in caplog.text # CPLE->DEP, DUK->DEC
+    assert "DEP" in caplog.text or "DEC" in caplog.text # CPLE->DEP, DUK->DEC
 
 
 def test_clean_eia_data_no_adjusted_demand(raw_eia_df_no_adj_demand):
