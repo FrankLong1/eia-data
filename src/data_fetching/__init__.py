@@ -1,6 +1,5 @@
 """Data fetching modules for EIA data pipeline."""
 
-from .download_eia_data import download_ba_data, download_all_parallel
-from .EIADataFetcher import EIADataFetcher
+from .download_eia_data import download_ba_data
 
-__all__ = ['download_ba_data', 'download_all_parallel', 'EIADataFetcher']
+__all__ = ['download_ba_data']

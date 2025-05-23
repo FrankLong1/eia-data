@@ -12,7 +12,6 @@ The pipeline downloads and processes hourly electricity demand data from the U.S
 eia-data/
 ├── README.md                    # This file
 ├── requirements.txt             # Python dependencies
-├── main.py                      # Main entry point for the pipeline
 ├── .env                         # API key configuration (not in git)
 ├── .env.template               # Template for API key setup
 ├── .gitignore                  # Git ignore rules
@@ -26,7 +25,6 @@ eia-data/
 │   ├── utils.py               # Common utility functions
 │   ├── data_fetching/         # Data fetching modules
 │   │   ├── __init__.py
-│   │   ├── EIADataFetcher.py     # Production data fetching class
 │   │   ├── download_eia_data.py  # Command-line download script
 │   │   └── test_eia_api.py       # API testing and debugging
 │   ├── data_processing/       # Data cleaning and processing (to be implemented)
@@ -79,9 +77,6 @@ python src/data_fetching/download_eia_data.py --bas PJM MISO ERCOT --start 2023-
 ```bash
 # Download all BAs for full date range (2016-2024) - takes several hours
 python src/data_fetching/download_eia_data.py --all
-
-# Download all data using parallel processing (faster)
-python src/data_fetching/download_eia_data.py --all --parallel --workers 5
 ```
 
 ### Download Specific Years
@@ -96,20 +91,6 @@ python src/data_fetching/download_eia_data.py --bas PJM MISO --years 2023 2024
 ### Additional Options
 - `--output DIR`: Specify output directory (default: data/raw)
 - `--skip-existing`: Skip files that already exist
-- `--parallel`: Use parallel downloading
-- `--workers N`: Number of parallel workers (default: 3)
-
-## Pipeline Execution
-
-```bash
-# Run complete pipeline (when fully implemented)
-python main.py --all
-
-# Or run individual steps
-python main.py --fetch    # Download data using EIADataFetcher
-python main.py --clean    # Clean data (to be implemented)
-python main.py --analyze  # Analyze curtailment potential (to be implemented)
-```
 
 ## Current Implementation Status
 
@@ -120,9 +101,7 @@ python main.py --analyze  # Analyze curtailment potential (to be implemented)
    - Data paths and cleaning parameters
 
 2. **Data Fetching**
-   - **`EIADataFetcher.py`**: Production module with OOP design, used by main.py
    - **`download_eia_data.py`**: Flexible standalone script with multiple download options
-   - Supports both sequential and parallel downloading
    - Automatic pagination and rate limiting
 
 3. **API Diagnostics (`src/data_fetching/test_eia_api.py`)**
