@@ -6,7 +6,8 @@ Script to clean all downloaded EIA data files.
 import os
 from pathlib import Path
 import logging
-from data_cleaner import clean_eia_data
+import pandas as pd
+from DataCleaner import clean_eia_data
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -40,19 +41,46 @@ def clean_all_data():
             try:
                 logging.info(f"Cleaning file: {file.name}")
                 
+                # Read the raw data
+                df = pd.read_csv(file)
+                
+                # Rename columns to match expected format
+                df_renamed = df.rename(columns={
+                    'period': 'Timestamp',
+                    'value': 'Demand',
+                    'respondent-name': 'Balancing Authority'
+                })
+                
+                # Check if there's an adjusted demand column (type-name might indicate this)
+                if 'type-name' in df.columns and 'demand (adjusted)' in df['type-name'].values:
+                    # Create separate columns for regular and adjusted demand
+                    demand_mask = df['type-name'] == 'demand'
+                    adj_mask = df['type-name'] == 'demand (adjusted)'
+                    
+                    if demand_mask.any():
+                        df_renamed.loc[demand_mask, 'Demand'] = df.loc[demand_mask, 'value']
+                    if adj_mask.any():
+                        df_renamed['Adjusted demand'] = None
+                        df_renamed.loc[adj_mask, 'Adjusted demand'] = df.loc[adj_mask, 'value']
+                
                 # Clean the data
-                cleaned_df = clean_eia_data(
-                    str(file),
+                df_cleaned = clean_eia_data(
+                    df_renamed,
+                    datetime_col='Timestamp',
+                    demand_col_primary='Demand',
+                    adj_demand_col_name='Adjusted demand',
                     ba_col='Balancing Authority'
                 )
                 
                 # Save cleaned data
                 output_file = ba_cleaned_dir / f"cleaned_{file.name}"
-                cleaned_df.to_csv(output_file, index=False)
+                df_cleaned.to_csv(output_file, index=False)
                 logging.info(f"Saved cleaned data to: {output_file}")
                 
             except Exception as e:
                 logging.error(f"Error processing {file}: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 continue
     
     logging.info("Data cleaning complete!")

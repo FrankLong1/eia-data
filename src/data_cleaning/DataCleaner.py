@@ -139,6 +139,131 @@ def correct_demand_spikes(df: pd.DataFrame, demand_column: str, ba_column: str =
         return smooth_spikes(df)
 
 
+def remove_extreme_outliers(df: pd.DataFrame, demand_col: str = "Unified Demand", 
+                           ba_col: str = None, method: str = "iqr_extreme") -> pd.DataFrame:
+    """
+    Remove extreme outliers using statistical methods.
+    
+    Args:
+        df: DataFrame with demand data
+        demand_col: Name of demand column
+        ba_col: Name of BA column (if provided, outliers detected per BA)
+        method: Detection method - "iqr_extreme", "mad", or "zscore"
+        
+    Returns:
+        DataFrame with extreme outliers replaced with interpolated values
+    """
+    if demand_col not in df.columns:
+        return df
+        
+    df = df.copy()
+    
+    def detect_outliers(series):
+        """Detect outliers in a series using the specified method."""
+        clean_series = series.dropna()
+        
+        if len(clean_series) < 10:  # Need minimum data points
+            return pd.Series(False, index=series.index)
+            
+        if method == "iqr_extreme":
+            # Use iterative approach to avoid outlier contamination
+            working_series = clean_series.copy()
+            
+            # First pass: remove obvious extreme outliers (>3x median)
+            median = working_series.median()
+            obvious_outliers = working_series > (median * 3)
+            if obvious_outliers.any():
+                working_series = working_series[~obvious_outliers]
+            
+            # Now calculate robust statistics on cleaned data
+            Q1 = working_series.quantile(0.25)
+            Q3 = working_series.quantile(0.75)
+            IQR = Q3 - Q1
+            median_clean = working_series.median()
+            
+            # Calculate bounds using cleaned statistics
+            # 1. Conservative IQR method
+            iqr_bound = Q3 + 3 * IQR  # More conservative than original 5*IQR
+            
+            # 2. Multiple of cleaned median
+            median_bound = median_clean * 2.5  # More conservative
+            
+            # 3. Use 90th percentile of cleaned data
+            p90_clean = working_series.quantile(0.90)
+            percentile_bound = p90_clean * 1.5
+            
+            # Take the most restrictive (lowest) reasonable bound
+            upper_bound = min(iqr_bound, median_bound, percentile_bound)
+            
+            # Absolute sanity check: no single BA should exceed 200 GW
+            upper_bound = min(upper_bound, 200000)
+            
+            return series > upper_bound
+            
+        elif method == "mad":
+            # Modified Z-score using Median Absolute Deviation
+            median = clean_series.median()
+            mad = np.median(np.abs(clean_series - median))
+            
+            if mad == 0:  # Fall back to IQR method if MAD is 0
+                Q1 = clean_series.quantile(0.25)
+                Q3 = clean_series.quantile(0.75)
+                IQR = Q3 - Q1
+                upper_bound = Q3 + 3 * IQR
+                return series > upper_bound
+                
+            modified_z_scores = 0.6745 * (series - median) / mad
+            return np.abs(modified_z_scores) > 10  # Extremely conservative threshold
+            
+        elif method == "zscore":
+            # Standard Z-score (less robust to outliers)
+            z_scores = np.abs((series - series.mean()) / series.std())
+            return z_scores > 6  # Extremely conservative threshold
+            
+    # Apply outlier detection
+    if ba_col and ba_col in df.columns:
+        # Detect outliers within each BA
+        extreme_mask = pd.Series(False, index=df.index)
+        
+        for ba in df[ba_col].unique():
+            ba_mask = df[ba_col] == ba
+            ba_data = df.loc[ba_mask, demand_col]
+            
+            ba_outliers = detect_outliers(ba_data)
+            extreme_mask.loc[ba_mask] = ba_outliers
+            
+            if ba_outliers.sum() > 0:
+                logging.warning(f"BA {ba}: Found {ba_outliers.sum()} extreme outliers using {method} method")
+    else:
+        # Global outlier detection
+        extreme_mask = detect_outliers(df[demand_col])
+    
+    num_extreme = extreme_mask.sum()
+    
+    if num_extreme > 0:
+        # Log the outlier values for debugging
+        outlier_values = df.loc[extreme_mask, demand_col].values
+        logging.warning(f"Outlier values detected: {outlier_values[:5]}{'...' if len(outlier_values) > 5 else ''}")
+        
+        # Replace extreme values with NaN
+        df.loc[extreme_mask, demand_col] = np.nan
+        
+        # Interpolate to fill the NaN values
+        if ba_col and ba_col in df.columns:
+            # Interpolate within each BA
+            for ba in df[ba_col].unique():
+                ba_mask = df[ba_col] == ba
+                df.loc[ba_mask, demand_col] = df.loc[ba_mask, demand_col].interpolate(
+                    method='linear', limit_direction='both'
+                )
+        else:
+            df[demand_col] = df[demand_col].interpolate(method='linear', limit_direction='both')
+        
+        logging.info(f"Removed {num_extreme} extreme outliers using {method} method")
+        
+    return df
+
+
 def handle_erroneous_peaks(df: pd.DataFrame, demand_column: str, ba_column: str, 
                           peak_threshold_factor: float = 2.0) -> pd.DataFrame:
     """
@@ -223,7 +348,10 @@ def clean_eia_data(
     
     logging.info("Created Unified Demand column")
     
-    # Step 3: Map BA labels
+    # Step 3: Remove extreme outliers (physically impossible values)
+    df = remove_extreme_outliers(df, "Unified Demand", ba_col=ba_col, method="iqr_extreme")
+    
+    # Step 4: Map BA labels
     if ba_col in df.columns:
         df = map_ba_labels(df, ba_col)
         logging.info(f"Mapped BA labels in column: {ba_col}")
@@ -232,7 +360,7 @@ def clean_eia_data(
     initial_nans = df["Unified Demand"].isna().sum()
     initial_zeros = (df["Unified Demand"] == 0).sum()
     
-    # Step 4: Interpolate missing/zero values
+    # Step 5: Interpolate missing/zero values
     columns_to_interpolate = interp_cols_user or ["Unified Demand"]
     df = fill_missing_zeros_linear_interpolation(df, columns_to_interpolate)
     
@@ -244,7 +372,7 @@ def clean_eia_data(
     if ba_col not in df.columns:
         logging.warning(f"BA column '{ba_col}' not found. Skipping BA-specific cleaning.")
     else:
-        # Step 5: Remove low outliers
+        # Step 6: Remove low outliers
         if datetime_col in df.columns:
             pre_outlier = df["Unified Demand"].copy()
             
@@ -256,7 +384,7 @@ def clean_eia_data(
             changed = (pre_outlier != df["Unified Demand"]).sum()
             logging.info(f"Imputed {changed} low outliers")
         
-        # Step 6: Smooth spikes
+        # Step 7: Smooth spikes
         pre_spike = df["Unified Demand"].copy()
         
         df = correct_demand_spikes(
@@ -268,7 +396,7 @@ def clean_eia_data(
         changed = (pre_spike != df["Unified Demand"]).sum()
         logging.info(f"Smoothed {changed} demand spikes")
         
-        # Step 7: Remove extreme peaks
+        # Step 8: Remove extreme peaks
         pre_peak = df["Unified Demand"].copy()
         
         df = handle_erroneous_peaks(

@@ -57,7 +57,7 @@ import pandas as pd
 # Assuming your data_cleaner module is structured under 'src'
 # Adjust the import path based on your project structure and how you run your code.
 # For example, if running from the root of the project:
-from src.data_cleaning.data_cleaner import clean_eia_data
+from src.data_cleaning.DataCleaner import clean_eia_data
 
 # Example: Load a raw DataFrame (replace with your actual data loading)
 # raw_df = pd.read_csv('your_eia_data.csv') 

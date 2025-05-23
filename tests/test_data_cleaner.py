@@ -12,7 +12,7 @@ from pandas.testing import assert_frame_equal, assert_series_equal
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 # For now, assume the environment handles this or use a placeholder if direct import fails.
 
-from src.data_cleaning.data_cleaner import (
+from src.data_cleaning.DataCleaner import (
     normalize_datetime,
     select_demand_value,
     map_ba_labels,
