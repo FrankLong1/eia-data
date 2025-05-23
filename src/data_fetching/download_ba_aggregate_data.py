@@ -99,7 +99,7 @@ def check_api_key():
         return False
 
 
-def download_ba_data(ba, start_date, end_date, output_dir='data/raw', skip_existing=False):
+def download_ba_data(ba, start_date, end_date, output_dir='ba_aggregate_data/raw', skip_existing=False):
     """
     Download hourly demand data for a specific balancing authority
     
@@ -243,8 +243,8 @@ Examples:
                        help='Download ALL 22 BAs for full date range (2016-2024)')
     
     # Output options
-    parser.add_argument('--output', type=str, default='data/raw', 
-                       help='Output directory for CSV files (default: data/raw)')
+    parser.add_argument('--output', type=str, default='ba_aggregate_data/raw', 
+                       help='Output directory for CSV files (default: ba_aggregate_data/raw)')
     parser.add_argument('--skip-existing', action='store_true', 
                        help='Skip downloading files that already exist')
     

@@ -11,14 +11,14 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
-from CurtailmentAnalyzer import CurtailmentAnalyzer
+from BAAggregateCurtailmentAnalyzer import CurtailmentAnalyzer
 import warnings
 warnings.filterwarnings('ignore')
 
 # Setup paths
 project_root = Path(__file__).parent.parent.parent
-cleaned_data_dir = project_root / "data" / "cleaned"
-viz_dir = project_root / "data" / "visualizations"
+cleaned_data_dir = project_root / "ba_aggregate_data" / "cleaned"
+viz_dir = project_root / "ba_aggregate_data" / "visualizations"
 viz_dir.mkdir(exist_ok=True)
 
 # Load all cleaned data

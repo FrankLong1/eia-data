@@ -15,7 +15,7 @@ env/
 ENV/
 
 # Data files
-data/*
+ba_aggregate_data/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 

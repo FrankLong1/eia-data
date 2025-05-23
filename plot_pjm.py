@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 # Load PJM data
-df = pd.read_csv('data/raw/PJM_hourly_demand.csv')
+df = pd.read_csv('ba_aggregate_data/raw/PJM_hourly_demand.csv')
 
 # Convert period to datetime
 df['datetime'] = pd.to_datetime(df['period'])
@@ -27,7 +27,7 @@ plt.grid(True, alpha=0.3)
 
 # Tight layout and save
 plt.tight_layout()
-plt.savefig('data/visualizations/PJM_hourly_demand.png', dpi=300, bbox_inches='tight')
+plt.savefig('ba_aggregate_data/visualizations/PJM_hourly_demand.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 print(f"Plotted {len(df)} hours of PJM demand data")

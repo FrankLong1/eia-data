@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import logging
 import pandas as pd
-from DataCleaner import clean_eia_data
+from BAAggregateCleaner import clean_eia_data
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,8 +15,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def clean_all_data():
     """Clean all downloaded EIA data files."""
     
-    raw_dir = Path("data/raw")
-    cleaned_dir = Path("data/cleaned")
+    raw_dir = Path("ba_aggregate_data/raw")
+    cleaned_dir = Path("ba_aggregate_data/cleaned")
     
     if not raw_dir.exists():
         logging.error("Raw data directory not found")

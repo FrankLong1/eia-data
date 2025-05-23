@@ -6,6 +6,19 @@ This project implements the data pipeline described in the paper "Rethinking Loa
 
 The pipeline downloads and processes hourly electricity demand data from the U.S. Energy Information Administration (EIA) API for 22 major balancing authorities from 2016-2024. This data is used to analyze the potential for integrating large flexible loads (like data centers) into the US power grid.
 
+## Usage
+All commands now use the ba_aggregate prefix:
+```bash
+# Download data
+python src/data_fetching/download_ba_aggregate_data.py --bas PJM --years 2023
+
+# Clean data
+python src/data_cleaning/run_ba_aggregate_cleaning.py
+
+# Run analysis
+python src/data_viz/run_ba_aggregate_curtailment_analysis.py
+```
+
 ## Project Structure
 
 ```
@@ -22,22 +35,21 @@ eia-data/
 │
 ├── src/                        # Source code modules
 │   ├── __init__.py
-│   ├── utils.py               # Common utility functions
 │   ├── data_fetching/         # Data fetching modules
 │   │   ├── __init__.py
-│   │   ├── download_eia_data.py  # Command-line download script
-│   │   └── test_eia_api.py       # API testing and debugging
-│   ├── data_processing/       # Data cleaning and processing (to be implemented)
-│   │   └── __init__.py
-│   ├── data_analysis/         # Analysis modules (to be implemented)
-│   │   └── __init__.py
-│   └── data_viz/              # Visualization modules (to be implemented)
-│       └── __init__.py
+│   │   └── download_ba_aggregate_data.py  # BA aggregate data download script
+│   ├── data_cleaning/         # Data cleaning modules
+│   │   ├── __init__.py
+│   │   ├── BAAggregateCleaner.py         # BA aggregate data cleaner class
+│   │   └── run_ba_aggregate_cleaning.py   # BA aggregate cleaning runner
+│   └── data_analysis/              # Visualization and analysis modules
+│       ├── BAAggregateCurtailmentAnalyzer.py      # Curtailment analysis class
+│       └── run_ba_aggregate_curtailment_analysis.py # Curtailment analysis runner
 │
-└── data/                       # Data directory
+└── ba_aggregate_data/          # BA aggregate data directory
     ├── raw/                    # Raw downloaded data
-    ├── processed/              # Cleaned data (to be created)
-    └── output/                 # Analysis results (to be created)
+    ├── cleaned/                # Cleaned data
+    └── visualizations/         # Analysis results and plots
 ```
 
 ## Setup
@@ -54,42 +66,42 @@ eia-data/
 3. **Test the Setup**
    ```bash
    # Quick test - download 3 months of PJM data
-   python src/data_fetching/download_eia_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
+   python src/data_fetching/download_ba_aggregate_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
    ```
 
 ## Data Download Options
 
-The `download_eia_data.py` script provides flexible download options:
+The `download_ba_aggregate_data.py` script provides flexible download options for BA aggregate demand data:
 
 ### Quick Test
 ```bash
 # Download 3 months of PJM data to verify API connection
-python src/data_fetching/download_eia_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
+python src/data_fetching/download_ba_aggregate_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
 ```
 
 ### Download Specific BAs and Date Range
 ```bash
 # Download specific BAs for a custom date range
-python src/data_fetching/download_eia_data.py --bas PJM MISO ERCOT --start 2023-01-01 --end 2023-12-31
+python src/data_fetching/download_ba_aggregate_data.py --bas PJM MISO ERCOT --start 2023-01-01 --end 2023-12-31
 ```
 
 ### Download All Data
 ```bash
 # Download all BAs for full date range (2016-2024) - takes several hours
-python src/data_fetching/download_eia_data.py --all
+python src/data_fetching/download_ba_aggregate_data.py --all
 ```
 
 ### Download Specific Years
 ```bash
 # Download specific years for all BAs
-python src/data_fetching/download_eia_data.py --years 2022 2023 2024
+python src/data_fetching/download_ba_aggregate_data.py --years 2022 2023 2024
 
 # Download specific years for specific BAs
-python src/data_fetching/download_eia_data.py --bas PJM MISO --years 2023 2024
+python src/data_fetching/download_ba_aggregate_data.py --bas PJM MISO --years 2023 2024
 ```
 
 ### Additional Options
-- `--output DIR`: Specify output directory (default: data/raw)
+- `--output DIR`: Specify output directory (default: ba_aggregate_data/raw)
 - `--skip-existing`: Skip files that already exist
 
 ## Current Implementation Status
@@ -101,17 +113,19 @@ python src/data_fetching/download_eia_data.py --bas PJM MISO --years 2023 2024
    - Data paths and cleaning parameters
 
 2. **Data Fetching**
-   - **`download_eia_data.py`**: Flexible standalone script with multiple download options
+   - **`download_ba_aggregate_data.py`**: Downloads BA aggregate demand data
    - Automatic pagination and rate limiting
+   - Flexible options for date ranges and BA selection
 
-3. **API Diagnostics (`src/data_fetching/test_eia_api.py`)**
-   - Diagnostic tool for debugging API issues (NOT for downloading data)
-   - Tests connectivity, explores endpoints, checks performance
-   - Use when troubleshooting connection problems
-   - Run with: `python src/data_fetching/test_eia_api.py`
+3. **Data Cleaning**
+   - **`BAAggregateCleaner.py`**: Cleans BA aggregate demand data following paper methodology
+   - **`run_ba_aggregate_cleaning.py`**: Runs the cleaning pipeline on downloaded data
+   - Handles outliers, interpolation, and BA label mapping
 
-4. **Utilities (`utils.py`)**
-   - Helper functions for logging and validation
+4. **Curtailment Analysis**
+   - **`BAAggregateCurtailmentAnalyzer.py`**: Analyzes curtailment-enabled headroom
+   - **`run_ba_aggregate_curtailment_analysis.py`**: Runs the full analysis pipeline
+   - Generates results matching paper methodology
 
 ### 🚧 To Be Implemented
 
