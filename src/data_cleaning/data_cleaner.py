@@ -16,7 +16,7 @@ def normalize_datetime(df: pd.DataFrame, datetime_column: str) -> pd.DataFrame:
     Returns:
         The DataFrame with the date-time column normalized.
     """
-    df[datetime_column] = pd.to_datetime(df[datetime_column])
+    df[datetime_column] = pd.to_datetime(df[datetime_column], errors='coerce')
     return df
 
 def select_demand_value(df: pd.DataFrame, demand_col: str = 'Demand', adj_demand_col: str = 'Adjusted demand') -> pd.DataFrame:

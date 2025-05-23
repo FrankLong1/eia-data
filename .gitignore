@@ -1,7 +1,6 @@
 # Environment variables
 .env
 
-
 *.png
 *.pdf
 
@@ -16,8 +15,7 @@ env/
 ENV/
 
 # Data files
-data/raw/*
-data/processed/*
+data/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
