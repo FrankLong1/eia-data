@@ -187,8 +187,6 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
         return None
 
 
-
-
 def parse_arguments():
     """
     Parse command line arguments
@@ -204,8 +202,8 @@ Examples:
   # Download data for specific plants
   python download_plant_data.py --plants 3 10 55876 --start 2023-01 --end 2023-12
   
-  # Download all plants in a state
-  python download_plant_data.py --state TX --start 2023-01 --end 2023-12
+  # Download all plants in a state  
+  python download_plant_data.py --states TX --start 2023-01 --end 2023-12
   
   # Download plants in multiple states (organized by state folders)
   python download_plant_data.py --states TX CA --years 2023
@@ -214,7 +212,7 @@ Examples:
   python download_plant_data.py --fuel NG --start 2023-01 --end 2023-12
   
   # Download plants in state with specific fuel type
-  python download_plant_data.py --state CA --fuel SUN --start 2023-01 --end 2023-12
+  python download_plant_data.py --states CA --fuel SUN --start 2023-01 --end 2023-12
   
   # Download specific years
   python download_plant_data.py --plants 3 10 --years 2022 2023 2024
@@ -223,7 +221,7 @@ Examples:
   python download_plant_data.py --plants 3 --start 2023-01 --end 2023-12 --data-type consumption
   
   # Skip existing files
-  python download_plant_data.py --state TX --years 2023 --skip-existing
+  python download_plant_data.py --states TX --years 2023 --skip-existing
         """
     )
     
@@ -238,10 +236,8 @@ Examples:
     # Plant selection options
     parser.add_argument('--plants', type=str, nargs='+',
                        help='Specific plant IDs to download')
-    parser.add_argument('--state', type=str, choices=STATES,
-                       help='Download all plants in a state (2-letter code)')
     parser.add_argument('--states', type=str, nargs='+', choices=STATES,
-                       help='Download all plants in multiple states (2-letter codes)')
+                       help='Download all plants in one or more states (2-letter codes)')
     parser.add_argument('--fuel', type=str, choices=list(FUEL_TYPES.keys()),
                        help='Download all plants with specific fuel type')
     parser.add_argument('--limit', type=int, default=None,
@@ -261,74 +257,88 @@ Examples:
     return parser.parse_args()
 
 
-def main():
+def query_relevant_plants(plants=None, states=None, fuel=None, limit=None):
     """
-    Main function to orchestrate plant data downloads
+    Query and return plant metadata based on search criteria.
+    Handles all plant searching, metadata fetching, and filtering logic.
+    
+    Args:
+        plants (list): List of specific plant IDs to query
+        states (list): List of state codes to query plants from
+        fuel (str): Fuel type code to filter plants by
+        limit (int): Maximum number of plants per state (only applies when states are specified)
+        
+    Returns:
+        dict: Dictionary of plant metadata matching the search criteria, or None if no plants found
     """
-    args = parse_arguments()
-    
-    # Validate API key
-    if not validate_api_key():
-        return
-    
-    # Determine plant list and metadata
     plant_metadata = {}
     
-    if args.plants:
-        # Specific plants requested - we'll get their state info later
-        for plant_id in args.plants:
+    # Phase 1: Initial plant search based on criteria
+    if plants:
+        # Specific plants requested
+        print(f"Searching for {len(plants)} specific plants...")
+        for plant_id in plants:
             plant_metadata[plant_id] = {'state': None, 'name': 'Unknown'}
-        print(f"Downloading data for {len(args.plants)} specific plants")
+            
+    elif states:
+        # One or more states requested
+        if len(states) == 1:
+            print(f"Searching for plants in {states[0]}...")
+            plant_metadata = get_plant_list_with_metadata(state=states[0], fuel_type=fuel)
+            print(f"Found {len(plant_metadata)} plants")
+        else:
+            print(f"Searching for plants in states: {', '.join(states)}")
+            for state in states:
+                state_plants = get_plant_list_with_metadata(state=state, fuel_type=fuel)
+                plant_metadata.update(state_plants)
+                print(f"  {state}: {len([p for p in state_plants.values() if p['state'] == state])} plants")
         
-    elif args.states:
-        # Multiple states requested
-        print(f"Fetching plants for states: {', '.join(args.states)}")
-        for state in args.states:
-            state_plants = get_plant_list_with_metadata(state=state, fuel_type=args.fuel)
-            plant_metadata.update(state_plants)
-            print(f"  {state}: {len([p for p in state_plants.values() if p['state'] == state])} plants")
-        
-    elif args.state:
-        # Single state requested
-        plant_metadata = get_plant_list_with_metadata(state=args.state, fuel_type=args.fuel)
-        print(f"Found {len(plant_metadata)} plants in {args.state}")
-        
-    elif args.fuel:
+    elif fuel:
         # Fuel type only
-        plant_metadata = get_plant_list_with_metadata(fuel_type=args.fuel)
-        print(f"Found {len(plant_metadata)} {args.fuel} plants")
+        print(f"Searching for {fuel} plants...")
+        plant_metadata = get_plant_list_with_metadata(fuel_type=fuel)
+        print(f"Found {len(plant_metadata)} plants")
         
     else:
-        print("Error: Must specify either --plants, --state, --states, or --fuel")
-        print("Use --help for examples")
-        return
+        print("Error: Must specify either --plants, --states, or --fuel")
+        return None
     
-    if not plant_metadata:
-        print("No plants found matching criteria")
-        return
-    
-    # If we have specific plants without state info, try to get their metadata
-    if args.plants and any(p['state'] is None for p in plant_metadata.values()):
-        print("Fetching metadata for specified plants...")
+    # Phase 2: Handle missing metadata for specific plants
+    if plants and any(p['state'] is None for p in plant_metadata.values()):
+        print("Fetching complete plant metadata...")
         all_metadata = get_plant_list_with_metadata()
-        for plant_id in args.plants:
+        for plant_id in plants:
             if plant_id in all_metadata:
                 plant_metadata[plant_id] = all_metadata[plant_id]
     
-    # Apply limit if specified
-    if args.limit and args.states:
-        print(f"\nLimiting to {args.limit} plants per state...")
+    # Phase 3: Check if we found any plants
+    if not plant_metadata:
+        print("\nNo plants found matching your criteria!")
+        if plants:
+            print(f"Could not find any of the specified plant IDs: {', '.join(plants)}")
+        elif fuel:
+            print(f"No plants found using fuel type: {fuel}")
+        elif states:
+            if len(states) == 1:
+                print(f"No plants found in state: {states[0]}")
+            else:
+                print(f"No plants found in states: {', '.join(states)}")
+        print("\nTry adjusting your search criteria or check the EIA database for available plants.")
+        return None
+    
+    # Phase 4: Apply limits if specified
+    if limit and states and len(states) > 0:
+        print(f"\nLimiting to {limit} plants per state...")
         limited_metadata = {}
-        for state in args.states:
+        for state in states:
             state_plants = {pid: meta for pid, meta in plant_metadata.items() 
                           if meta.get('state') == state}
-            # Take first N plants from each state
             for i, (pid, meta) in enumerate(state_plants.items()):
-                if i < args.limit:
+                if i < limit:
                     limited_metadata[pid] = meta
         plant_metadata = limited_metadata
     
-    # Show summary by state
+    # Phase 5: Show summary
     state_counts = {}
     for plant_id, metadata in plant_metadata.items():
         state = metadata.get('state', 'Unknown')
@@ -338,9 +348,28 @@ def main():
     for state, count in sorted(state_counts.items()):
         print(f"  {state}: {count} plants")
     
-    # Determine date range
+    return plant_metadata
+
+
+def main():
+    args = parse_arguments()
+    
+    # Validate API key
+    if not validate_api_key():
+        return
+    
+    # Get relevant plants
+    plant_metadata = query_relevant_plants(
+        plants=args.plants,
+        states=args.states,
+        fuel=args.fuel,
+        limit=args.limit
+    )
+    if not plant_metadata:
+        return
+    
+    # Download data for found plants
     if args.years:
-        # Download by years
         for year in args.years:
             start_date = f"{year}-01"
             end_date = f"{year}-12"
@@ -358,9 +387,7 @@ def main():
                 time.sleep(0.5)  # Rate limiting
                 
     elif args.start and args.end:
-        # Custom date range
         print(f"\nDownloading {args.data_type} data from {args.start} to {args.end}")
-        
         for plant_id, metadata in tqdm(plant_metadata.items(), desc="Plants"):
             download_plant_data(
                 plant_id, args.start, args.end,
@@ -377,7 +404,6 @@ def main():
         return
     
     print("\nDownload complete!")
-    print(f"Data saved to: {args.output}/[STATE]/[PLANT_ID]_generation_[dates].csv")
 
 
 if __name__ == "__main__":
