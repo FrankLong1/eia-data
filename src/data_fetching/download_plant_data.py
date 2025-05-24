@@ -12,98 +12,40 @@ This data includes generation, consumption, and fuel receipts for each plant.
 # Standard library imports
 import os
 import argparse
-import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import time
 from tqdm import tqdm
-import json
-from dotenv import load_dotenv
 import logging
+
+# Import shared utilities
+from ..utils import (
+    FUEL_TYPES, STATES, 
+    validate_api_key, make_eia_request
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load environment variables
-load_dotenv()
-
-# EIA API configuration
-EIA_API_URL = "https://api.eia.gov/v2/electricity/facility-fuel/data/"
-EIA_API_KEY = os.environ.get('EIA_API_KEY')
-
-# Common fuel types for filtering
-FUEL_TYPES = {
-    'NG': 'Natural Gas',
-    'COL': 'Coal', 
-    'NUC': 'Nuclear',
-    'SUN': 'Solar',
-    'WND': 'Wind',
-    'WAT': 'Hydro',
-    'OIL': 'Oil',
-    'GEO': 'Geothermal',
-    'BIO': 'Biomass',
-    'OTH': 'Other'
-}
-
-# State abbreviations for filtering
-STATES = [
-    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-    'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-    'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-    'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-    'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'
-]
+# EIA API endpoint for plant data
+PLANT_DATA_ENDPOINT = "electricity/facility-fuel/data/"
 
 
-def check_api_key():
+def get_plant_list_with_metadata(state=None, fuel_type=None):
     """
-    Validate the EIA API key
-    Returns:
-        bool: True if API key is valid, False otherwise
-    """
-    test_params = {
-        'api_key': EIA_API_KEY,
-        'frequency': 'monthly',
-        'data[0]': 'generation',
-        'start': '2024-01',
-        'end': '2024-01',
-        'length': 1
-    }
-    
-    try:
-        response = requests.get(EIA_API_URL, params=test_params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if 'response' in data:
-            logging.info("API key is valid!")
-            return True
-        else:
-            logging.error("API key may be invalid or API structure has changed")
-            return False
-            
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error checking API key: {e}")
-        return False
-
-
-def get_plant_list(state=None, fuel_type=None):
-    """
-    Get list of available plants filtered by state and/or fuel type
+    Get list of available plants with metadata filtered by state and/or fuel type
     
     Args:
         state (str): State abbreviation to filter by
         fuel_type (str): Fuel type code to filter by
     
     Returns:
-        list: List of plant IDs matching criteria
+        dict: Dictionary mapping plant IDs to their metadata (state, name)
     """
-    logging.info(f"Fetching plant list (state={state}, fuel_type={fuel_type})")
+    logging.info(f"Fetching plant list with metadata (state={state}, fuel_type={fuel_type})")
     
     # Use facility-fuel endpoint to get plant data
-    # First do a test query to get plants
     params = {
-        'api_key': EIA_API_KEY,
         'frequency': 'monthly',
         'data[0]': 'generation',
         'start': '2023-01',
@@ -120,47 +62,41 @@ def get_plant_list(state=None, fuel_type=None):
     if fuel_type:
         params['facets[fuel2002][]'] = fuel_type
     
-    all_plants = set()
+    plant_metadata = {}
     
     while True:
-        try:
-            response = requests.get(EIA_API_URL, params=params, timeout=30)
-            
-            if response.status_code != 200:
-                logging.error(f"HTTP {response.status_code}: {response.text[:200]}")
-                break
-                
-            data = response.json()
-            
-            if 'response' not in data or 'data' not in data['response']:
-                break
-                
-            records = data['response']['data']
-            if not records:
-                break
-                
-            # Extract unique plant IDs
-            for record in records:
-                if 'plantCode' in record:
-                    all_plants.add(str(record['plantCode']))
-            
-            if len(records) < 5000:
-                break
-                
-            params['offset'] += 5000
-            time.sleep(0.1)
-            
-        except Exception as e:
-            logging.error(f"Error fetching plant list: {e}")
+        data = make_eia_request(PLANT_DATA_ENDPOINT, params)
+        
+        if not data or 'response' not in data or 'data' not in data['response']:
             break
+            
+        records = data['response']['data']
+        if not records:
+            break
+            
+        # Extract plant metadata
+        for record in records:
+            if 'plantCode' in record:
+                plant_id = str(record['plantCode'])
+                if plant_id not in plant_metadata:
+                    plant_metadata[plant_id] = {
+                        'state': record.get('state', 'Unknown'),
+                        'name': record.get('plantName', 'Unknown'),
+                        'state_desc': record.get('stateDescription', 'Unknown')
+                    }
+        
+        if len(records) < 5000:
+            break
+            
+        params['offset'] += 5000
+        time.sleep(0.1)
     
-    plant_list = sorted(list(all_plants))
-    logging.info(f"Found {len(plant_list)} unique plants")
-    return plant_list
+    logging.info(f"Found {len(plant_metadata)} unique plants")
+    return plant_metadata
 
 
 def download_plant_data(plant_id, start_date, end_date, data_type='generation', 
-                       output_dir='plant_data/raw', skip_existing=False):
+                       output_dir='plant_data/raw', skip_existing=False, state=None):
     """
     Download data for a specific plant
     
@@ -171,12 +107,18 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
         data_type (str): Type of data to download ('generation', 'consumption', 'receipts')
         output_dir (str): Directory to save the data
         skip_existing (bool): Whether to skip if file exists
+        state (str): State code for organizing output directory
     
     Returns:
         pd.DataFrame or None: Downloaded data if successful
     """
-    # Create plant-specific directory
-    save_dir = os.path.join(output_dir, str(plant_id))
+    # Create state directory structure (no plant subdirectory)
+    if state:
+        save_dir = os.path.join(output_dir, state)
+    else:
+        save_dir = output_dir
+    
+    # Include plant ID in filename
     filename = f"{plant_id}_{data_type}_{start_date}_{end_date}.csv"
     output_file = os.path.join(save_dir, filename)
     
@@ -187,7 +129,6 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
     
     # API parameters
     params = {
-        'api_key': EIA_API_KEY,
         'frequency': 'monthly',
         'data[0]': data_type,
         'facets[plantCode][]': plant_id,
@@ -202,40 +143,41 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
     all_data = []
     
     while True:
-        try:
-            response = requests.get(EIA_API_URL, params=params, timeout=30)
+        data = make_eia_request(PLANT_DATA_ENDPOINT, params)
+        
+        if not data or 'response' not in data or 'data' not in data['response']:
+            if not all_data:  # Only warn if we got no data at all
+                logging.warning(f"No data found for plant {plant_id}")
+            break
             
-            if response.status_code != 200:
-                logging.error(f"HTTP {response.status_code} for plant {plant_id}: {response.text}")
-                return None
-                
-            data = response.json()
+        records = data['response']['data']
+        if not records:
+            break
             
-            if 'response' not in data or 'data' not in data['response']:
-                logging.warning(f"Unexpected response structure for plant {plant_id}")
-                return None
-                
-            records = data['response']['data']
-            if not records:
-                break
-                
-            all_data.extend(records)
+        all_data.extend(records)
+        
+        if len(records) < 5000:
+            break
+        else:
+            params['offset'] += 5000
             
-            if len(records) < 5000:
-                break
-            else:
-                params['offset'] += 5000
-                
-            time.sleep(0.1)
-            
-        except Exception as e:
-            logging.error(f"Error downloading data for plant {plant_id}: {e}")
-            return None
+        time.sleep(0.1)
     
     if all_data:
         os.makedirs(save_dir, exist_ok=True)
         
         df = pd.DataFrame(all_data)
+        
+        # Convert period to datetime for sorting
+        df['period'] = pd.to_datetime(df['period'], format='%Y-%m')
+        
+        # Sort by period (chronological order) and then by other columns for consistency
+        df = df.sort_values(['period', 'fuel2002', 'primeMover'], na_position='last')
+        
+        # Convert period back to string format
+        df['period'] = df['period'].dt.strftime('%Y-%m')
+        
+        # Save to CSV
         df.to_csv(output_file, index=False)
         
         logging.info(f"Saved {len(df)} records for plant {plant_id} to {output_file}")
@@ -264,6 +206,9 @@ Examples:
   
   # Download all plants in a state
   python download_plant_data.py --state TX --start 2023-01 --end 2023-12
+  
+  # Download plants in multiple states (organized by state folders)
+  python download_plant_data.py --states TX CA --years 2023
   
   # Download all plants with specific fuel type
   python download_plant_data.py --fuel NG --start 2023-01 --end 2023-12
@@ -295,8 +240,12 @@ Examples:
                        help='Specific plant IDs to download')
     parser.add_argument('--state', type=str, choices=STATES,
                        help='Download all plants in a state (2-letter code)')
+    parser.add_argument('--states', type=str, nargs='+', choices=STATES,
+                       help='Download all plants in multiple states (2-letter codes)')
     parser.add_argument('--fuel', type=str, choices=list(FUEL_TYPES.keys()),
                        help='Download all plants with specific fuel type')
+    parser.add_argument('--limit', type=int, default=None,
+                       help='Limit number of plants per state (for testing)')
     
     # Data options
     parser.add_argument('--data-type', type=str, default='generation',
@@ -319,35 +268,75 @@ def main():
     args = parse_arguments()
     
     # Validate API key
-    if not EIA_API_KEY:
-        print("Error: EIA_API_KEY not found in environment")
-        print("Please set your API key in the .env file")
+    if not validate_api_key():
         return
     
-    if not check_api_key():
-        print("Please check your API key")
-        return
-    
-    # Determine plant list
-    plants = []
+    # Determine plant list and metadata
+    plant_metadata = {}
     
     if args.plants:
-        # Specific plants requested
-        plants = args.plants
-        print(f"Downloading data for {len(plants)} specific plants")
+        # Specific plants requested - we'll get their state info later
+        for plant_id in args.plants:
+            plant_metadata[plant_id] = {'state': None, 'name': 'Unknown'}
+        print(f"Downloading data for {len(args.plants)} specific plants")
         
-    elif args.state or args.fuel:
-        # Get plants by state and/or fuel type
-        plants = get_plant_list(state=args.state, fuel_type=args.fuel)
-        if not plants:
-            print("No plants found matching criteria")
-            return
-        print(f"Found {len(plants)} plants matching criteria")
+    elif args.states:
+        # Multiple states requested
+        print(f"Fetching plants for states: {', '.join(args.states)}")
+        for state in args.states:
+            state_plants = get_plant_list_with_metadata(state=state, fuel_type=args.fuel)
+            plant_metadata.update(state_plants)
+            print(f"  {state}: {len([p for p in state_plants.values() if p['state'] == state])} plants")
+        
+    elif args.state:
+        # Single state requested
+        plant_metadata = get_plant_list_with_metadata(state=args.state, fuel_type=args.fuel)
+        print(f"Found {len(plant_metadata)} plants in {args.state}")
+        
+    elif args.fuel:
+        # Fuel type only
+        plant_metadata = get_plant_list_with_metadata(fuel_type=args.fuel)
+        print(f"Found {len(plant_metadata)} {args.fuel} plants")
         
     else:
-        print("Error: Must specify either --plants, --state, or --fuel")
+        print("Error: Must specify either --plants, --state, --states, or --fuel")
         print("Use --help for examples")
         return
+    
+    if not plant_metadata:
+        print("No plants found matching criteria")
+        return
+    
+    # If we have specific plants without state info, try to get their metadata
+    if args.plants and any(p['state'] is None for p in plant_metadata.values()):
+        print("Fetching metadata for specified plants...")
+        all_metadata = get_plant_list_with_metadata()
+        for plant_id in args.plants:
+            if plant_id in all_metadata:
+                plant_metadata[plant_id] = all_metadata[plant_id]
+    
+    # Apply limit if specified
+    if args.limit and args.states:
+        print(f"\nLimiting to {args.limit} plants per state...")
+        limited_metadata = {}
+        for state in args.states:
+            state_plants = {pid: meta for pid, meta in plant_metadata.items() 
+                          if meta.get('state') == state}
+            # Take first N plants from each state
+            for i, (pid, meta) in enumerate(state_plants.items()):
+                if i < args.limit:
+                    limited_metadata[pid] = meta
+        plant_metadata = limited_metadata
+    
+    # Show summary by state
+    state_counts = {}
+    for plant_id, metadata in plant_metadata.items():
+        state = metadata.get('state', 'Unknown')
+        state_counts[state] = state_counts.get(state, 0) + 1
+    
+    print("\nPlants by state:")
+    for state, count in sorted(state_counts.items()):
+        print(f"  {state}: {count} plants")
     
     # Determine date range
     if args.years:
@@ -357,12 +346,14 @@ def main():
             end_date = f"{year}-12"
             
             print(f"\nDownloading {args.data_type} data for {year}")
-            for plant_id in tqdm(plants, desc=f"Plants ({year})"):
+            for plant_id, metadata in tqdm(plant_metadata.items(), 
+                                          desc=f"Plants ({year})"):
                 download_plant_data(
                     plant_id, start_date, end_date,
                     data_type=args.data_type,
                     output_dir=args.output,
-                    skip_existing=args.skip_existing
+                    skip_existing=args.skip_existing,
+                    state=metadata.get('state')
                 )
                 time.sleep(0.5)  # Rate limiting
                 
@@ -370,12 +361,13 @@ def main():
         # Custom date range
         print(f"\nDownloading {args.data_type} data from {args.start} to {args.end}")
         
-        for plant_id in tqdm(plants, desc="Plants"):
+        for plant_id, metadata in tqdm(plant_metadata.items(), desc="Plants"):
             download_plant_data(
                 plant_id, args.start, args.end,
                 data_type=args.data_type,
                 output_dir=args.output,
-                skip_existing=args.skip_existing
+                skip_existing=args.skip_existing,
+                state=metadata.get('state')
             )
             time.sleep(0.5)  # Rate limiting
             
@@ -385,6 +377,7 @@ def main():
         return
     
     print("\nDownload complete!")
+    print(f"Data saved to: {args.output}/[STATE]/[PLANT_ID]_generation_[dates].csv")
 
 
 if __name__ == "__main__":

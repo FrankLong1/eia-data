@@ -9,31 +9,23 @@ Options available for bulk download and custom date ranges.
 # Standard library imports
 import os  # For file and directory operations
 import argparse  # For parsing command line arguments
-import requests  # For making HTTP requests to the EIA API
 import pandas as pd  # For data manipulation and CSV handling
 from datetime import datetime, timedelta  # For date operations
 import time  # For rate limiting and delays
 from tqdm import tqdm  # For progress bars
-import json  # For handling JSON responses
-from dotenv import load_dotenv  # For loading environment variables
 import logging  # For logging operations
+
+# Import shared utilities
+from ..utils import (
+    BALANCING_AUTHORITIES,
+    validate_api_key, make_eia_request
+)
 
 # Configure logging with timestamp, level, and message format
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load environment variables from .env file
-load_dotenv()
-
-# EIA API configuration constants
-EIA_API_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"  # Base URL for EIA API
-EIA_API_KEY = os.environ.get('EIA_API_KEY')  # Get API key from environment variables
-
-# List of all balancing authorities (BAs) from the research paper
-BALANCING_AUTHORITIES = [
-    'PJM', 'MISO', 'ERCO', 'SWPP', 'SOCO', 'CISO', 'ISNE', 'NYIS',
-    'DUK', 'CPLE', 'FPC', 'TVA', 'BPAT', 'AZPS', 'FPL', 'PACE', 
-    'PACW', 'PGE', 'PSCO', 'SRP', 'SCEG', 'SC'
-]
+# EIA API endpoint for BA data
+BA_DATA_ENDPOINT = "electricity/rto/region-data/data/"
 
 # Mapping of paper acronyms to official EIA respondent names
 # This mapping is based on Appendix B of the research paper
@@ -63,40 +55,6 @@ def get_eia_respondent_name(ba):
     return BA_MAPPING.get(ba, ba)  # Return mapped name or original if not found
 
 
-def check_api_key():
-    """
-    Validate the EIA API key by making a test request
-    Returns:
-        bool: True if API key is valid, False otherwise
-    """
-    # Test parameters for a minimal API request
-    test_params = {
-        'api_key': EIA_API_KEY,
-        'frequency': 'hourly',
-        'data[0]': 'value',
-        'facets[respondent][]': 'PJM',
-        'start': '2024-01-01T00',
-        'end': '2024-01-01T00',
-        'length': 1
-    }
-    
-    try:
-        # Make test request to API
-        response = requests.get(EIA_API_URL, params=test_params, timeout=10)
-        response.raise_for_status()  # Raise exception for bad status codes
-        data = response.json()
-        
-        # Check if response contains expected structure
-        if 'response' in data:
-            logging.info("API key is valid!")
-            return True
-        else:
-            logging.error("API key may be invalid or API structure has changed")
-            return False
-            
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error checking API key: {e}")
-        return False
 
 
 def download_ba_data(ba, start_date, end_date, output_dir='ba_aggregate_data/raw', skip_existing=False):
@@ -126,7 +84,6 @@ def download_ba_data(ba, start_date, end_date, output_dir='ba_aggregate_data/raw
     
     # API request parameters
     params = {
-        'api_key': EIA_API_KEY,
         'frequency': 'hourly',
         'data[0]': 'value',
         'facets[respondent][]': ba,
@@ -143,25 +100,15 @@ def download_ba_data(ba, start_date, end_date, output_dir='ba_aggregate_data/raw
     
     # Loop to handle pagination
     while True:
-        # Make API request with timeout
-        response = requests.get(EIA_API_URL, params=params, timeout=30)
+        # Make API request using shared utility
+        data = make_eia_request(BA_DATA_ENDPOINT, params)
         
-        # Handle HTTP errors explicitly
-        if response.status_code != 200:
-            logging.error(f"HTTP {response.status_code} error for {ba}: {response.text}")
-            return None
-            
-        try:
-            data = response.json()
-        except json.JSONDecodeError as e:
-            logging.error(f"Invalid JSON response for {ba}: {e}")
-            return None
-            
         # ===== EXIT CONDITIONS =====
-        # 1. Invalid response structure
-        if 'response' not in data or 'data' not in data['response']:
-            logging.warning(f"Unexpected response structure for {ba}")
-            return None
+        # 1. Invalid response or no data
+        if not data or 'response' not in data or 'data' not in data['response']:
+            if not all_data:  # Only warn if we got no data at all
+                logging.warning(f"No data found for {ba}")
+            break
             
         # 2. No data returned (empty result set)
         records = data['response']['data']
@@ -258,14 +205,7 @@ def main():
     args = parse_arguments()
     
     # Validate API key
-    if not EIA_API_KEY:
-        print("Error: EIA_API_KEY not found in environment")
-        print("Please set your API key in the .env file")
-        return
-    
-    # Test API key
-    if not check_api_key():
-        print("Please check your API key")
+    if not validate_api_key():
         return
     
     # Handle different download scenarios based on command line arguments
