@@ -3,11 +3,14 @@
 EIA Plant-Level Data Download Script
 
 Downloads monthly generation data for individual power plants from the EIA API.
-Supports flexible download options including by plant ID, state, fuel type, and date ranges.
+Supports flexible download options including by plant ID, state, fuel type, and year ranges.
 
 Data Organization:
-- Time-series data: Saved to plant_data/raw/STATE/*.csv (generation over time)
+- Time-series data: Saved to plant_data/raw_plant_generation_data/STATE/{PLANT_ID}_{YEAR}_{data_type}.csv
 - Plant metadata: Saved to plant_data/plant_lookup.csv (location, BA, ownership)
+
+File naming format:
+- Example: 1001_2023_generation.csv (Plant ID 1001, year 2023, generation data)
 
 Naming conventions:
 - plant_list: Basic plant info (ID, name, state) from initial API query
@@ -29,7 +32,7 @@ import zipfile
 import io
 import json
 
-TIME_BETWEEN_REQUESTS = 0.1
+TIME_BETWEEN_REQUESTS = 0.0
 
 # Import shared utilities
 from ..utils import (
@@ -39,7 +42,7 @@ from ..utils import (
 )
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # EIA API endpoint for plant data
 PLANT_DATA_ENDPOINT = "electricity/facility-fuel/data/"
@@ -50,7 +53,7 @@ PLANT_LOCATION_ENDPOINT = "electricity/operating-generator-capacity/data/"
 
 def _download_eia860_zip(year):
     """Download EIA-860 zip file if not cached."""
-    download_dir = 'plant_data/raw_downloads'
+    download_dir = 'plant_data/eia860_downloads'
     os.makedirs(download_dir, exist_ok=True)
     zip_path = os.path.join(download_dir, f'eia860_{year}.zip')
     
@@ -373,10 +376,16 @@ def fetch_complete_plant_metadata(basic_plant_info, year=2023):
     ba_data = fetch_balancing_authority_data(plant_ids)
     print(f" found {len(ba_data)} plants")
     
-    # 2. Get location and ownership data from EIA-860
-    location_ownership_data = fetch_eia860_location_ownership_data(year)
-    matching_860 = sum(1 for pid in plant_ids if pid in location_ownership_data)
-    print(f" found {matching_860} plants")
+    # 2. Get location and ownership data from EIA-860 (if available)
+    try:
+        location_ownership_data = fetch_eia860_location_ownership_data(year)
+        matching_860 = sum(1 for pid in plant_ids if pid in location_ownership_data)
+        print(f" found {matching_860} plants")
+    except Exception as e:
+        logging.warning(f"Could not fetch EIA-860 data for year {year}: {e}")
+        logging.warning("Continuing without location/ownership data")
+        location_ownership_data = {}
+        print(f" EIA-860 data not available for year {year}")
     
     # 3. Combine all data sources
     records = []
@@ -463,22 +472,21 @@ def update_plant_lookup_table(new_plant_df, output_dir='plant_data'):
     return lookup_file
 
 
-def download_plant_data(plant_id, start_date, end_date, data_type='generation', 
-                       output_dir='plant_data/raw', skip_existing=False, state=None):
+def download_plant_data(plant_id, year, data_type='generation', 
+                       output_dir='plant_data/raw_plant_generation_data', skip_existing=False, state=None):
     """
-    Download time-series data for a specific plant (generation, consumption, or receipts).
+    Download time-series data for a specific plant for a given year.
     
     Args:
         plant_id (str): Plant ID to download
-        start_date (str): Start date in YYYY-MM format
-        end_date (str): End date in YYYY-MM format  
+        year (int): Year to download data for
         data_type (str): Type of data to download ('generation', 'consumption', 'receipts')
         output_dir (str): Directory to save the data
         skip_existing (bool): Whether to skip if file exists
         state (str): State code for organizing output directory
     
     Returns:
-        pd.DataFrame or None: Downloaded data if successful
+        tuple: (status, df) where status is 'skipped', 'downloaded', or 'failed'
     """
     # Create state directory structure (no plant subdirectory)
     if state:
@@ -486,16 +494,18 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
     else:
         save_dir = output_dir
     
-    # Include plant ID in filename
-    filename = f"{plant_id}_{data_type}_{start_date}_{end_date}.csv"
+    # New filename format: {PLANT_ID}_{YEAR}_generation.csv
+    filename = f"{plant_id}_{year}_{data_type}.csv"
     output_file = os.path.join(save_dir, filename)
     
     # Check if file exists
     if skip_existing and os.path.exists(output_file):
-        logging.info(f"File already exists, skipping: {output_file}")
-        return pd.read_csv(output_file)
+        return 'skipped', pd.read_csv(output_file)
     
-    # API parameters
+    # API parameters for full year
+    start_date = f"{year}-01"
+    end_date = f"{year}-12"
+    
     params = {
         'frequency': 'monthly',
         'data[0]': data_type,
@@ -515,7 +525,7 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
         
         if not data or 'response' not in data or 'data' not in data['response']:
             if not all_data:  # Only warn if we got no data at all
-                logging.warning(f"No data found for plant {plant_id}")
+                logging.warning(f"No data found for plant {plant_id} in year {year}")
             break
             
         records = data['response']['data']
@@ -533,8 +543,8 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
     
     # Exit early if no data found
     if not all_data:
-        logging.warning(f"No data found for plant {plant_id}")
-        return None
+        logging.warning(f"No data found for plant {plant_id} in year {year}")
+        return 'failed', None
     
     os.makedirs(save_dir, exist_ok=True)
     
@@ -546,9 +556,136 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
     # Convert period back to string format
     df['period'] = df['period'].dt.strftime('%Y-%m')
     df.to_csv(output_file, index=False)
-    logging.info(f"Saved {len(df)} records for plant {plant_id} to {output_file}")
+    # logging.info(f"Saved {len(df)} records for plant {plant_id} to {output_file}")
     
-    return df
+    return 'downloaded', df
+
+
+def download_plants_batch(plant_ids_with_state, year, data_type='generation',
+                         output_dir='plant_data/raw_plant_generation_data', skip_existing=False,
+                         batch_size=200):
+    """
+    Download time-series data for multiple plants in a single API request.
+    
+    Args:
+        plant_ids_with_state (list): List of tuples (plant_id, state)
+        year (int): Year to download data for
+        data_type (str): Type of data to download
+        output_dir (str): Directory to save the data
+        skip_existing (bool): Whether to skip if file exists
+        batch_size (int): Maximum number of plants per API request
+    
+    Returns:
+        dict: Statistics with keys 'skipped', 'downloaded', 'failed'
+    """
+    stats = {'skipped': 0, 'downloaded': 0, 'failed': 0}
+    
+    # Check which files already exist
+    plants_to_download = []
+    for plant_id, state in plant_ids_with_state:
+        save_dir = os.path.join(output_dir, state) if state else output_dir
+        filename = f"{plant_id}_{year}_{data_type}.csv"
+        output_file = os.path.join(save_dir, filename)
+        
+        if skip_existing and os.path.exists(output_file):
+            stats['skipped'] += 1
+        else:
+            plants_to_download.append((plant_id, state))
+    
+    if not plants_to_download:
+        return stats
+    
+    # Process in batches
+    num_batches = (len(plants_to_download) + batch_size - 1) // batch_size
+    
+    for batch_idx, i in enumerate(range(0, len(plants_to_download), batch_size)):
+        batch = plants_to_download[i:i + batch_size]
+        plant_ids = [p[0] for p in batch]
+        
+        # Show progress
+        print(f"  Batch {batch_idx + 1}/{num_batches}: Downloading {len(batch)} plants...", end='', flush=True)
+        
+        # API parameters for batch request
+        start_date = f"{year}-01"
+        end_date = f"{year}-12"
+        
+        params = {
+            'frequency': 'monthly',
+            'data[0]': data_type,
+            'facets[plantCode][]': plant_ids,  # Multiple plant IDs!
+            'start': start_date,
+            'end': end_date,
+            'sort[0][column]': 'period',
+            'sort[0][direction]': 'asc',
+            'offset': 0,
+            'length': 5000
+        }
+        
+        all_data = []
+        
+        # Fetch all data for this batch
+        while True:
+            data = make_eia_request(PLANT_DATA_ENDPOINT, params)
+            
+            if not data or 'response' not in data or 'data' not in data['response']:
+                break
+                
+            records = data['response']['data']
+            if not records:
+                break
+                
+            all_data.extend(records)
+            
+            if len(records) < 5000:
+                break
+            else:
+                params['offset'] += 5000
+                
+            time.sleep(TIME_BETWEEN_REQUESTS)
+        
+        # Group data by plant and save
+        if all_data:
+            df = pd.DataFrame(all_data)
+            
+            # Debug: Check what plant codes we actually got
+            unique_plants = df['plantCode'].unique()
+            print(f"\n  DEBUG: Requested {len(batch)} plants, got data for {len(unique_plants)} unique plants")
+            if len(unique_plants) < 10:  # Only print if small number
+                print(f"  Plant IDs in response: {sorted(unique_plants)}")
+                print(f"  Plant IDs requested: {sorted([p[0] for p in batch][:10])}...")
+            
+            # Process each plant's data
+            for plant_id, state in batch:
+                # Convert both to string for comparison since API might return either strings or integers
+                plant_df = df[df['plantCode'].astype(str) == str(plant_id)].copy()
+                
+                if plant_df.empty:
+                    logging.warning(f"No data found for plant {plant_id} in year {year}")
+                    stats['failed'] += 1
+                    continue
+                
+                # Save plant data
+                save_dir = os.path.join(output_dir, state) if state else output_dir
+                os.makedirs(save_dir, exist_ok=True)
+                
+                filename = f"{plant_id}_{year}_{data_type}.csv"
+                output_file = os.path.join(save_dir, filename)
+                
+                # Sort and save
+                plant_df['period'] = pd.to_datetime(plant_df['period'], format='%Y-%m')
+                plant_df = plant_df.sort_values(['period', 'fuel2002', 'primeMover'], na_position='last')
+                plant_df['period'] = plant_df['period'].dt.strftime('%Y-%m')
+                plant_df.to_csv(output_file, index=False)
+                
+                stats['downloaded'] += 1
+        else:
+            # No data for any plants in batch
+            stats['failed'] += len(batch)
+        
+        # Update progress
+        print(f" Done! (Downloaded: {sum(1 for p in batch if p[0] in [pid for pid, _ in batch if all_data])})")
+    
+    return stats
 
 
 def load_and_merge_plant_data(csv_file, lookup_file='plant_data/plant_lookup.csv'):
@@ -600,23 +737,26 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download all plants in a state  
-  python download_plant_data.py --states TX --start 2023-01 --end 2023-12
+  # Download all plants in a state for years 2016-2023
+  python download_plant_data.py --states TX --start 2016 --end 2023
   
   # Download plants in multiple states (organized by state folders)
-  python download_plant_data.py --states TX CA --start 2023-01 --end 2023-12
+  python download_plant_data.py --states TX CA --start 2020 --end 2023
   
   # Download all plants with specific fuel type
-  python download_plant_data.py --fuel NG --start 2023-01 --end 2023-12
+  python download_plant_data.py --fuel NG --start 2022 --end 2023
   
   # Download plants in state with specific fuel type
-  python download_plant_data.py --states CA --fuel SUN --start 2023-01 --end 2023-12
+  python download_plant_data.py --states CA --fuel SUN --start 2018 --end 2023
   
   # Download different data types (generation, consumption, receipts)
-  python download_plant_data.py --states TX --start 2023-01 --end 2023-12 --data-type consumption
+  python download_plant_data.py --states TX --start 2020 --end 2023 --data-type consumption
   
-  # Skip existing files
-  python download_plant_data.py --states TX --start 2023-01 --end 2023-12 --skip-existing
+  # Force download even if files exist
+  python download_plant_data.py --states TX --start 2016 --end 2023 --force-download
+  
+  # Increase batch size for faster downloads (default: 200, max: 250)
+  python download_plant_data.py --states TX CA --start 2020 --end 2023 --batch-size 250
   
 Note: Data is automatically enriched with:
   - Balancing authority assignments
@@ -627,10 +767,10 @@ Note: Data is automatically enriched with:
     )
     
     # Date options
-    parser.add_argument('--start', type=str, required=True,
-                       help='Start date (YYYY-MM format for monthly data)')
-    parser.add_argument('--end', type=str, required=True,
-                       help='End date (YYYY-MM format for monthly data)')
+    parser.add_argument('--start', type=int, required=True,
+                       help='Start year (e.g., 2016)')
+    parser.add_argument('--end', type=int, required=True,
+                       help='End year (e.g., 2023)')
     
     # Plant selection options
     parser.add_argument('--states', type=str, nargs='+', choices=STATES,
@@ -646,10 +786,14 @@ Note: Data is automatically enriched with:
                        help='Type of data to download (default: generation)')
     
     # Output options
-    parser.add_argument('--output', type=str, default='plant_data/raw',
-                       help='Output directory (default: plant_data/raw)')
-    parser.add_argument('--skip-existing', action='store_true',
-                       help='Skip downloading files that already exist')
+    parser.add_argument('--output', type=str, default='plant_data/raw_plant_generation_data',
+                       help='Output directory (default: plant_data/raw_plant_generation_data)')
+    parser.add_argument('--force-download', action='store_true',
+                       help='Force download even if files already exist (default: skip existing files)')
+    
+    # Performance options
+    parser.add_argument('--batch-size', type=int, default=200,
+                       help='Number of plants to download per API request (default: 200, max: 250)')
     
     return parser.parse_args()
 
@@ -674,24 +818,48 @@ def main():
         plant_list = limit_plant_list(plant_list, states=args.states, limit=args.limit)
     
     # Enrich with complete metadata and save to lookup table (Use start year for EIA-860 data)
-    year = int(args.start.split('-')[0])
-    complete_metadata_df = fetch_complete_plant_metadata(plant_list, year)
+    complete_metadata_df = fetch_complete_plant_metadata(plant_list, args.start)
     base_dir = args.output.rsplit('/raw', 1)[0] if '/raw' in args.output else args.output
     update_plant_lookup_table(complete_metadata_df, base_dir)
     
     # Download time-series data for found plants
     print(f"\nDownloading {args.data_type} data from {args.start} to {args.end}")
-    for plant_id, basic_info in tqdm(plant_list.items(), desc="Plants"):
-        download_plant_data(
-            plant_id, args.start, args.end,
+    
+    # Track download statistics
+    total_stats = {'skipped': 0, 'downloaded': 0, 'failed': 0}
+    
+    # Prepare plant list with states
+    plant_ids_with_state = [(plant_id, info.get('state')) for plant_id, info in plant_list.items()]
+    
+    # Loop through each year in the range
+    for year in range(args.start, args.end + 1):
+        print(f"\n--- Processing year {year} ---")
+        
+        # Use batch download (configurable plants per API request)
+        year_stats = download_plants_batch(
+            plant_ids_with_state,
+            year,
             data_type=args.data_type,
             output_dir=args.output,
-            skip_existing=args.skip_existing,
-            state=basic_info.get('state')
+            skip_existing=not args.force_download,
+            batch_size=args.batch_size
         )
-        time.sleep(TIME_BETWEEN_REQUESTS)  # Rate limiting
+        
+        # Update total stats
+        for key in year_stats:
+            total_stats[key] += year_stats[key]
+        
+        # Print year summary
+        year_total = len(plant_list)
+        print(f"Year {year}: Downloaded: {year_stats['downloaded']}, Skipped: {year_stats['skipped']}, Failed: {year_stats['failed']}")
     
-    print("\nDownload complete!")
+    # Print total summary
+    total_files = len(plant_list) * (args.end - args.start + 1)
+    print(f"\nDownload complete!")
+    print(f"Total files processed: {total_files}")
+    print(f"Skipped: {total_stats['skipped']} ({total_stats['skipped']/total_files*100:.1f}%)")
+    print(f"Downloaded: {total_stats['downloaded']} ({total_stats['downloaded']/total_files*100:.1f}%)")
+    print(f"Failed: {total_stats['failed']} ({total_stats['failed']/total_files*100:.1f}%)")
 
 
 if __name__ == "__main__":
