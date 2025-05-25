@@ -179,3 +179,4 @@ A VSCode launch configuration is provided in `.vscode/launch.json` for debugging
 - Paper: "Rethinking Load Growth" (Nicholas Institute, 2025)
 - EIA API Documentation: https://www.eia.gov/opendata/documentation.php
 - EIA Hourly Electric Grid Monitor: https://www.eia.gov/electricity/gridmonitor/
+- EIA Form 860 Information https://www.eia.gov/electricity/data/eia860/
