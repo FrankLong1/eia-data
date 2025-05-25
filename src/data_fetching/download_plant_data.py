@@ -353,11 +353,117 @@ def limit_plant_list(plant_metadata, states=None, limit=None):
     return limited_metadata
 
 
-def download_plant_data(plant_id, start_date, end_date, data_type='generation', 
-                       output_dir='plant_data/raw', skip_existing=False, state=None,
-                       location_data=None, eia860_data=None):
+def save_plant_metadata_lookup(plant_metadata, location_data, eia860_data, output_dir='plant_data'):
     """
-    Download data for a specific plant
+    Save or update plant metadata in master lookup table.
+    
+    Args:
+        plant_metadata (dict): Basic plant metadata (ID, name, state)
+        location_data (dict): BA and entity data from operating-generator-capacity
+        eia860_data (dict): Detailed EIA-860 data (lat/long, ownership, etc.)
+        output_dir (str): Base directory for data (lookup saved to output_dir/plant_lookup.csv)
+    
+    Returns:
+        str: Path to the master metadata file
+    """
+    # Master lookup file location
+    master_file = os.path.join(output_dir, 'plant_lookup.csv')
+    
+    # Combine all metadata sources for current batch
+    current_plants_data = []
+    
+    for plant_id, basic_info in plant_metadata.items():
+        # Start with basic info
+        plant_record = {
+            'plant_id': plant_id,
+            'plant_name': basic_info.get('name'),
+            'state': basic_info.get('state'),
+            'state_name': basic_info.get('state_desc')
+        }
+        
+        # Add location/BA data
+        if plant_id in location_data:
+            loc_info = location_data[plant_id]
+            plant_record.update({
+                'balancing_authority_code': loc_info.get('balancing_authority_code'),
+                'balancing_authority_name': loc_info.get('balancing_authority_name'),
+                'entity_name': loc_info.get('entity_name'),
+                'entity_id': loc_info.get('entity_id'),
+                'sector': loc_info.get('sector'),
+                'technology': loc_info.get('technology')
+            })
+        
+        # Add EIA-860 data
+        if plant_id in eia860_data:
+            eia_info = eia860_data[plant_id]
+            plant_record.update({
+                'latitude': eia_info.get('latitude'),
+                'longitude': eia_info.get('longitude'),
+                'county': eia_info.get('county'),
+                'zip_code': eia_info.get('zip_code'),
+                'street_address': eia_info.get('street_address'),
+                'city': eia_info.get('city'),
+                'balancing_authority_code_eia': eia_info.get('balancing_authority_code_eia'),
+                'balancing_authority_name_eia': eia_info.get('balancing_authority_name_eia'),
+                'nerc_region': eia_info.get('nerc_region'),
+                'primary_purpose': eia_info.get('primary_purpose')
+            })
+            
+            # Add owners as JSON string for CSV compatibility
+            if 'owners' in eia_info and eia_info['owners']:
+                owner_strings = [f"{o['name']} ({o['percent_owned']}%)" 
+                               for o in eia_info['owners'] if o.get('name')]
+                plant_record['owners'] = '; '.join(owner_strings)
+            else:
+                plant_record['owners'] = ''
+                
+            # Add lat/long tuple
+            if pd.notna(plant_record.get('latitude')) and pd.notna(plant_record.get('longitude')):
+                plant_record['lat_lng_tuple'] = f"({plant_record['latitude']}, {plant_record['longitude']})"
+        
+        # Add update timestamp
+        plant_record['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        current_plants_data.append(plant_record)
+    
+    # Update or create master lookup table
+    if os.path.exists(master_file):
+        # Load existing master
+        existing_df = pd.read_csv(master_file, dtype={'plant_id': str})
+        new_df = pd.DataFrame(current_plants_data)
+        
+        # Get plant IDs being updated
+        updating_plants = set(new_df['plant_id'])
+        
+        # Keep all plants not being updated
+        unchanged_df = existing_df[~existing_df['plant_id'].isin(updating_plants)]
+        
+        # Combine unchanged plants with new/updated plants
+        combined_df = pd.concat([unchanged_df, new_df], ignore_index=True).sort_values('plant_id')
+        
+        combined_df.to_csv(master_file, index=False)
+        logging.info(f"Updated {len(updating_plants)} plants in master lookup, total plants: {len(combined_df)}")
+    else:
+        # Create new master file
+        master_df = pd.DataFrame(current_plants_data)
+        master_df.to_csv(master_file, index=False)
+        logging.info(f"Created master lookup with {len(current_plants_data)} plants")
+    
+    # Show summary of what states are in the lookup
+    if os.path.exists(master_file):
+        df = pd.read_csv(master_file)
+        state_counts = df['state'].value_counts().to_dict()
+        print(f"\nMaster lookup contains {len(df)} plants across {len(state_counts)} states:")
+        for state, count in sorted(state_counts.items()):
+            print(f"  {state}: {count} plants")
+    
+    return master_file
+
+
+def download_plant_data(plant_id, start_date, end_date, data_type='generation', 
+                       output_dir='plant_data/raw', skip_existing=False, state=None):
+    """
+    Download time-series data for a specific plant (generation, consumption, or receipts).
     
     Args:
         plant_id (str): Plant ID to download
@@ -367,8 +473,6 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
         output_dir (str): Directory to save the data
         skip_existing (bool): Whether to skip if file exists
         state (str): State code for organizing output directory
-        location_data (dict): Optional location/BA data to merge with plant data
-        eia860_data (dict): Optional EIA-860 data with lat/long and ownership info
     
     Returns:
         pd.DataFrame or None: Downloaded data if successful
@@ -438,41 +542,7 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
         # Convert period back to string format
         df['period'] = df['period'].dt.strftime('%Y-%m')
         
-        # Add location/BA data from operating-generator-capacity if available
-        if location_data and plant_id in location_data:
-            loc_info = location_data[plant_id]
-            for key, value in loc_info.items():
-                df[key] = value
-        
-        # Add EIA-860 data if available (lat/long, ownership, etc.)
-        if eia860_data and plant_id in eia860_data:
-            eia_info = eia860_data[plant_id]
-            for key, value in eia_info.items():
-                if key == 'owners':
-                    # Convert owners list to a string representation
-                    if value:
-                        owner_strings = [f"{o['name']} ({o['percent_owned']}%)" for o in value if o['name']]
-                        df['owners'] = '; '.join(owner_strings)
-                    else:
-                        df['owners'] = ''  # Empty string for no owners
-                elif key in ['latitude', 'longitude'] and pd.notna(value):
-                    df[key] = value
-                else:
-                    df[key] = value
-            
-            # Always add owners column even if empty
-            if 'owners' not in df.columns:
-                df['owners'] = ''
-            
-            # Add lat/long tuple column if both coordinates are available
-            lat = eia_info.get('latitude')
-            lng = eia_info.get('longitude')
-            if pd.notna(lat) and pd.notna(lng):
-                df['lat_lng_tuple'] = f"({lat}, {lng})"
-            else:
-                df['lat_lng_tuple'] = None
-        
-        # Save to CSV
+        # Save to CSV with just the time-series data
         df.to_csv(output_file, index=False)
         
         logging.info(f"Saved {len(df)} records for plant {plant_id} to {output_file}")
@@ -480,6 +550,43 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
     else:
         logging.warning(f"No data found for plant {plant_id}")
         return None
+
+
+def load_and_merge_plant_data(csv_file, lookup_file='plant_data/plant_lookup.csv'):
+    """
+    Load time-series data and merge with plant metadata from lookup table.
+    
+    Args:
+        csv_file (str): Path to time-series CSV file
+        lookup_file (str): Path to plant lookup table (default: plant_data/plant_lookup.csv)
+    
+    Returns:
+        pd.DataFrame: Merged dataframe with time-series data and metadata
+    """
+    # Load time-series data
+    df = pd.read_csv(csv_file, dtype={'plantCode': str})
+    
+    # Load lookup table
+    if not os.path.exists(lookup_file):
+        logging.warning(f"Lookup file not found: {lookup_file}")
+        return df
+    
+    lookup_df = pd.read_csv(lookup_file, dtype={'plant_id': str})
+    
+    # Merge on plant ID
+    merged_df = df.merge(
+        lookup_df, 
+        left_on='plantCode', 
+        right_on='plant_id', 
+        how='left',
+        suffixes=('', '_lookup')
+    )
+    
+    # Drop duplicate plant_id column
+    if 'plant_id' in merged_df.columns:
+        merged_df = merged_df.drop('plant_id', axis=1)
+    
+    return merged_df
 
 
 def parse_arguments():
@@ -572,16 +679,24 @@ def main():
     if args.limit:
         plant_metadata = limit_plant_list(plant_metadata, states=args.states, limit=args.limit)
     
+    # Fetch additional metadata
+    print("\nFetching additional metadata...")
     print("  - Fetching balancing authority data from API...")
     location_data = get_plant_location_data(list(plant_metadata.keys()))
     print(f"    Found BA data for {len(location_data)} plants")
     
     # Get detailed plant data from EIA-860 files using the most recent year from the date range
+    print("  - Downloading EIA-860 data (lat/long, ownership)...")
     year = int(args.end.split('-')[0] if args.end else args.years[-1] if args.years else 2023)
     eia860_data = download_eia860_plant_data(year)
     print(f"    Found EIA-860 data for {len(eia860_data)} plants")
     
-    # Download data for found plants
+    # Save all metadata to lookup table
+    print("\nSaving plant metadata to lookup table...")
+    lookup_file = save_plant_metadata_lookup(plant_metadata, location_data, eia860_data, args.output.rsplit('/raw', 1)[0])
+    print(f"  Saved to: {lookup_file}")
+    
+    # Download time-series data for found plants
     if args.years:
         for year in args.years:
             start_date = f"{year}-01"
@@ -595,9 +710,7 @@ def main():
                     data_type=args.data_type,
                     output_dir=args.output,
                     skip_existing=args.skip_existing,
-                    state=metadata.get('state'),
-                    location_data=location_data,
-                    eia860_data=eia860_data
+                    state=metadata.get('state')
                 )
                 time.sleep(TIME_BETWEEN_REQUESTS)  # Rate limiting
                 
@@ -609,9 +722,7 @@ def main():
                 data_type=args.data_type,
                 output_dir=args.output,
                 skip_existing=args.skip_existing,
-                state=metadata.get('state'),
-                location_data=location_data,
-                eia860_data=eia860_data
+                state=metadata.get('state')
             )
             time.sleep(TIME_BETWEEN_REQUESTS)  # Rate limiting
             
