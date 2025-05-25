@@ -10,9 +10,11 @@ This package contains shared utilities used across the project:
 from .constants import (
     FUEL_TYPES,
     STATES,
+    STATE_NAMES,
     BALANCING_AUTHORITIES,
     PRIME_MOVERS,
     BA_MAPPING,
+    EIA860_URL_PATTERN,
     get_state_name,
     get_eia_respondent_name,
     get_fuel_description,
@@ -38,9 +40,11 @@ __all__ = [
     # Constants
     'FUEL_TYPES',
     'STATES',
+    'STATE_NAMES',
     'BALANCING_AUTHORITIES',
     'PRIME_MOVERS',
     'BA_MAPPING',
+    'EIA860_URL_PATTERN',
     'get_state_name',
     'get_eia_respondent_name',
     'get_fuel_description',

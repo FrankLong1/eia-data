@@ -120,6 +120,8 @@ PRIME_MOVERS = {
     'ALL': 'All Types'
 }
 
+# EIA-860 data URL pattern
+EIA860_URL_PATTERN = "https://www.eia.gov/electricity/data/eia860/xls/eia860{year}.zip"
 
 # Getter functions
 def get_state_name(state_code: str) -> str:

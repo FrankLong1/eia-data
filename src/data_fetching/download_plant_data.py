@@ -5,8 +5,15 @@ EIA Plant-Level Data Download Script
 Downloads monthly generation data for individual power plants from the EIA API.
 Supports flexible download options including by plant ID, state, fuel type, and date ranges.
 
-Note: EIA provides plant-level data at monthly granularity through the facility-fuel endpoint.
-This data includes generation, consumption, and fuel receipts for each plant.
+Data Organization:
+- Time-series data: Saved to plant_data/raw/STATE/*.csv (generation over time)
+- Plant metadata: Saved to plant_data/plant_lookup.csv (location, BA, ownership)
+
+Naming conventions:
+- plant_list: Basic plant info (ID, name, state) from initial API query
+- complete_metadata: Enriched data including coordinates, BA, ownership
+- location_ownership_data: Data from EIA-860 files (lat/long, owners)
+- ba_data: Balancing authority assignments from operating-generator-capacity API
 """
 
 # Standard library imports
@@ -20,13 +27,15 @@ import logging
 import requests
 import zipfile
 import io
+import json
 
 TIME_BETWEEN_REQUESTS = 0.1
 
 # Import shared utilities
 from ..utils import (
     FUEL_TYPES, STATES, 
-    validate_api_key, make_eia_request
+    validate_api_key, make_eia_request,
+    EIA860_URL_PATTERN
 )
 
 # Configure logging
@@ -39,171 +48,164 @@ PLANT_DATA_ENDPOINT = "electricity/facility-fuel/data/"
 PLANT_LOCATION_ENDPOINT = "electricity/operating-generator-capacity/data/"
 
 
-def download_eia860_plant_data(year=2023, cache_dir='plant_data/eia860_cache'):
+def _download_eia860_zip(year):
+    """Download EIA-860 zip file if not cached."""
+    download_dir = 'plant_data/raw_downloads'
+    os.makedirs(download_dir, exist_ok=True)
+    zip_path = os.path.join(download_dir, f'eia860_{year}.zip')
+    
+    if os.path.exists(zip_path):
+        logging.info(f"Using cached EIA-860 zip from {zip_path}")
+        return zip_path
+    
+    logging.info(f"Downloading EIA-860 data for year {year}")
+    url = EIA860_URL_PATTERN.format(year=year)
+    
+    response = requests.get(url)
+    response.raise_for_status()
+    
+    with open(zip_path, 'wb') as f:
+        f.write(response.content)
+    logging.info(f"Saved EIA-860 zip to {zip_path}")
+    return zip_path
+
+
+def _parse_plant_file(zipf, plant_file):
+    """Parse plant location data from EIA-860 plant file."""
+    if not plant_file:
+        raise ValueError("No plant file provided")
+        
+    logging.info(f"Reading plant data from {plant_file}")
+    
+    with zipf.open(plant_file) as f:
+        df = pd.read_excel(f, engine='openpyxl', skiprows=1)
+    
+    # Find plant ID column
+    plant_id_col = None
+    for col in ['Plant Code', 'Plant ID', 'PlantCode', 'PlantID']:
+        if col in df.columns:
+            plant_id_col = col
+            break
+    
+    if not plant_id_col:
+        raise ValueError(f"Could not find plant ID column in {plant_file}. Available: {list(df.columns)[:10]}")
+    
+    # Extract plant data
+    plant_data = {}
+    for _, row in df.iterrows():
+        plant_id = str(row.get(plant_id_col, ''))
+        if not plant_id or plant_id == 'nan':
+            continue
+            
+        plant_data[plant_id] = {
+            'latitude': row.get('Latitude'),
+            'longitude': row.get('Longitude'),
+            'county': row.get('County'),
+            'zip_code': row.get('Zip') or row.get('Zip Code'),
+            'street_address': row.get('Street Address'),
+            'city': row.get('City'),
+            'balancing_authority_code_eia': row.get('Balancing Authority Code'),
+            'balancing_authority_name_eia': row.get('Balancing Authority Name'),
+            'nerc_region': row.get('NERC Region'),
+            'primary_purpose': row.get('Primary Purpose NAICS Code')
+        }
+    
+    return plant_data
+
+
+def _parse_owner_file(zipf, owner_file, plant_data):
+    """Parse ownership data from EIA-860 owner file."""
+    if not owner_file or not plant_data:
+        return
+        
+    logging.info(f"Reading ownership data from {owner_file}")
+    
+    with zipf.open(owner_file) as f:
+        df = pd.read_excel(f, engine='openpyxl', skiprows=1)
+    
+    # Find plant ID column
+    plant_id_col = None
+    for col in ['Plant Code', 'Plant ID', 'PlantCode', 'PlantID']:
+        if col in df.columns:
+            plant_id_col = col
+            break
+    
+    if not plant_id_col:
+        logging.warning(f"Could not find plant ID column in {owner_file}")
+        return
+    
+    # Add ownership data
+    for _, row in df.iterrows():
+        plant_id = str(row.get(plant_id_col, ''))
+        if not plant_id or plant_id == 'nan' or plant_id not in plant_data:
+            continue
+        
+        if 'owners' not in plant_data[plant_id]:
+            plant_data[plant_id]['owners'] = []
+        
+        owner_name = row.get('Owner Name')
+        percent = row.get('Percent Owned')
+        
+        if owner_name:
+            plant_data[plant_id]['owners'].append({
+                'name': owner_name,
+                'percent_owned': percent
+            })
+
+
+def fetch_eia860_location_ownership_data(year=2023):
     """
-    Download and parse EIA-860 plant data including lat/long and ownership info.
+    Fetch location (lat/long) and ownership data from EIA-860 dataset.
     
     Args:
         year (int): Year of data to download
-        cache_dir (str): Directory to cache the downloaded data
     
     Returns:
-        dict: Dictionary with plant data including coordinates and ownership
+        dict: Dictionary mapping plant IDs to location/ownership data
     """
-    import json
-    
-    # Check cache first
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f'eia860_{year}_plant_data.json')
-    
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r') as f:
-                logging.info(f"Loading EIA-860 data from cache: {cache_file}")
-                return json.load(f)
-        except Exception as e:
-            logging.warning(f"Failed to load cache: {e}")
-    
-    logging.info(f"Downloading EIA-860 data for year {year}")
-    
-    # EIA-860 download URL pattern
-    url = f"https://www.eia.gov/electricity/data/eia860/xls/eia860{year}.zip"
-    
+    # Download zip file
     try:
-        # Download the zip file
-        response = requests.get(url)
-        response.raise_for_status()
-        
-        # Extract and read the Plant file
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            plant_data = {}
-            
-            # Look for the Plant file (usually named 2___Plant_Y[Year].xlsx)
-            plant_file = None
-            for filename in z.namelist():
-                if '2___Plant' in filename and filename.endswith('.xlsx'):
-                    plant_file = filename
-                    break
-                    
-            # Debug: show all files in the zip
-            logging.info(f"Files in EIA-860 zip: {z.namelist()}")
-            
-            if plant_file:
-                logging.info(f"Reading plant data from {plant_file}")
-                with z.open(plant_file) as f:
-                    # Read the Excel file, skipping the first row which is a header
-                    df = pd.read_excel(f, engine='openpyxl', skiprows=1)
-                    
-                    # Log available columns for debugging
-                    logging.info(f"First few columns in Plant file: {list(df.columns)[:10]}")
-                    
-                    # Try different possible column names for plant ID
-                    plant_id_col = None
-                    for col in ['Plant Code', 'Plant ID', 'PlantCode', 'PlantID', 'plant_id']:
-                        if col in df.columns:
-                            plant_id_col = col
-                            break
-                    
-                    if not plant_id_col:
-                        logging.warning(f"Could not find plant ID column. Available columns: {list(df.columns)}")
-                        return plant_data
-                    
-                    # Extract relevant columns (with flexible column name matching)
-                    for _, row in df.iterrows():
-                        plant_id = str(row.get(plant_id_col, ''))
-                        if plant_id and plant_id != 'nan':
-                            plant_data[plant_id] = {
-                                'latitude': row.get('Latitude') or row.get('latitude') or row.get('LAT'),
-                                'longitude': row.get('Longitude') or row.get('longitude') or row.get('LON'),
-                                'county': row.get('County') or row.get('county'),
-                                'zip_code': row.get('Zip') or row.get('Zip Code') or row.get('ZIP'),
-                                'street_address': row.get('Street Address') or row.get('Street_Address'),
-                                'city': row.get('City') or row.get('city'),
-                                'balancing_authority_code_eia': row.get('Balancing Authority Code') or row.get('BA Code'),
-                                'balancing_authority_name_eia': row.get('Balancing Authority Name') or row.get('BA Name'),
-                                'nerc_region': row.get('NERC Region') or row.get('NERC_Region'),
-                                'primary_purpose': row.get('Primary Purpose NAICS Code') or row.get('Primary_Purpose')
-                            }
-            
-            # Look for the Owner file (usually named 4___Owner_Y[Year].xlsx)
-            owner_file = None
-            for filename in z.namelist():
-                if '4___Owner' in filename and filename.endswith('.xlsx'):
-                    owner_file = filename
-                    break
-            
-            if owner_file:
-                logging.info(f"Reading ownership data from {owner_file}")
-                with z.open(owner_file) as f:
-                    # Read the Excel file, skipping the first row which is a header
-                    df_owner = pd.read_excel(f, engine='openpyxl', skiprows=1)
-                    
-                    # Log available columns for debugging
-                    logging.info(f"First few columns in Owner file: {list(df_owner.columns)[:10]}")
-                    
-                    # Find plant ID column
-                    plant_id_col = None
-                    for col in ['Plant Code', 'Plant ID', 'PlantCode', 'PlantID', 'plant_id']:
-                        if col in df_owner.columns:
-                            plant_id_col = col
-                            break
-                    
-                    if plant_id_col:
-                        # Aggregate ownership data by plant
-                        for _, row in df_owner.iterrows():
-                            plant_id = str(row.get(plant_id_col, ''))
-                            if plant_id and plant_id != 'nan' and plant_id in plant_data:
-                                if 'owners' not in plant_data[plant_id]:
-                                    plant_data[plant_id]['owners'] = []
-                                
-                                owner_name = row.get('Owner Name') or row.get('Owner_Name') or row.get('owner_name')
-                                percent = row.get('Percent Owned') or row.get('Percent_Owned') or row.get('percent_owned')
-                                
-                                if owner_name:
-                                    plant_data[plant_id]['owners'].append({
-                                        'name': owner_name,
-                                        'percent_owned': percent
-                                    })
-            
-            logging.info(f"Successfully loaded EIA-860 data for {len(plant_data)} plants")
-            
-            # Save to cache
-            try:
-                with open(cache_file, 'w') as f:
-                    json.dump(plant_data, f)
-                logging.info(f"Saved EIA-860 data to cache: {cache_file}")
-            except Exception as e:
-                logging.warning(f"Failed to save cache: {e}")
-            
-            return plant_data
-            
+        zip_path = _download_eia860_zip(year)
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to download EIA-860 data: {e}")
         return {}
-    except Exception as e:
-        logging.error(f"Error processing EIA-860 data: {e}")
-        import traceback
-        traceback.print_exc()
+    
+    # Open and process zip file
+    with zipfile.ZipFile(zip_path) as z:
+        # Find relevant files
+        plant_file = next((filename for filename in z.namelist() 
+                           if '2___Plant' in filename and filename.endswith('.xlsx')), None)
+        owner_file = next((filename for filename in z.namelist() 
+                           if '4___Owner' in filename and filename.endswith('.xlsx')), None)
+        
+        # Parse plant location data
+        try:
+            plant_data = _parse_plant_file(z, plant_file)
+        except Exception as e:
+            logging.error(f"Failed to parse plant file: {e}")
+            return {}
+        
+        # Parse ownership data (optional - don't fail if missing)
+        try:
+            _parse_owner_file(z, owner_file, plant_data)
+        except Exception as e:
+            logging.warning(f"Failed to parse owner file (continuing without ownership data): {e}")
+        
+        logging.info(f"Successfully loaded EIA-860 data for {len(plant_data)} plants")
+        return plant_data
+
+
+def fetch_balancing_authority_data(plant_ids):
+    """
+    Fetch BA and entity data from operating-generator-capacity endpoint.
+    """
+    if not plant_ids:
         return {}
-
-
-def get_plant_location_data(plant_ids):
-    """
-    Fetch location and balancing authority data for given plant IDs from operating-generator-capacity endpoint.
-    
-    Args:
-        plant_ids (list): List of plant IDs to fetch location data for
-    
-    Returns:
-        dict: Dictionary mapping plant IDs to their location and BA data
-    """
-    logging.info(f"Fetching location data for {len(plant_ids)} plants")
-    
-    # This endpoint provides BA information and other metadata
+        
     params = {
         'frequency': 'monthly',
         'data[0]': 'nameplate-capacity-mw',
-        'start': '2023-01',  # Use recent data
+        'start': '2023-01',
         'end': '2023-01',
         'sort[0][column]': 'plantid',
         'sort[0][direction]': 'asc',
@@ -211,59 +213,54 @@ def get_plant_location_data(plant_ids):
         'length': 5000
     }
     
-    location_data = {}
+    ba_data = {}
+    plant_id_set = set(plant_ids)
     
-    # Fetch data from API
     while True:
-        data = make_eia_request(PLANT_LOCATION_ENDPOINT, params)
-        
-        if not data or 'response' not in data or 'data' not in data['response']:
+        response = make_eia_request(PLANT_LOCATION_ENDPOINT, params)
+        if not response:
             break
             
-        records = data['response']['data']
+        records = response.get('response', {}).get('data', [])
         if not records:
             break
             
-        # Extract location and BA data
         for record in records:
             plant_id = str(record.get('plantid', ''))
-            
-            if plant_id in plant_ids and plant_id not in location_data:
-                location_data[plant_id] = {
-                    'balancing_authority_code': record.get('balancing_authority_code'),
-                    'balancing_authority_name': record.get('balancing-authority-name'),
-                    'entity_name': record.get('entityName'),
-                    'entity_id': record.get('entityid'),
-                    'sector': record.get('sector'),
-                    'technology': record.get('technology')
-                }
+            if plant_id not in plant_id_set or plant_id in ba_data:
+                continue
+                
+            ba_data[plant_id] = {
+                'balancing_authority_code': record.get('balancing_authority_code'),
+                'balancing_authority_name': record.get('balancing-authority-name'),
+                'entity_name': record.get('entityName'),
+                'entity_id': record.get('entityid'),
+                'sector': record.get('sector'),
+                'technology': record.get('technology')
+            }
         
-        # Check if we've found all plants we're looking for
-        if len(location_data) >= len(plant_ids):
-            break
-            
-        if len(records) < 5000:
+        # Stop if we've found all plants or reached end of data
+        if len(ba_data) >= len(plant_ids) or len(records) < 5000:
             break
             
         params['offset'] += 5000
         time.sleep(0.1)
     
-    logging.info(f"Found location data for {len(location_data)} plants")
-    return location_data
+    return ba_data
 
 
-def get_plant_list_with_metadata(states=None, fuel_type=None):
+def get_plant_list(states=None, fuel_type=None):
     """
-    Get list of available plants with metadata filtered by state and/or fuel type.
+    Get basic list of plants filtered by state and/or fuel type.
     
     Args:
         states (list): List of state abbreviations to filter by
         fuel_type (str): Fuel type code to filter by
     
     Returns:
-        dict: Dictionary mapping plant IDs to their metadata (state, name)
+        dict: Dictionary mapping plant IDs to basic info (name, state)
     """
-    logging.info(f"Fetching plant list with metadata (state={states}, fuel_type={fuel_type})")
+    logging.info(f"Fetching plant list (state={states}, fuel_type={fuel_type})")
     
     # Use facility-fuel endpoint to get plant data
     params = {
@@ -283,181 +280,187 @@ def get_plant_list_with_metadata(states=None, fuel_type=None):
     if fuel_type:
         params['facets[fuel2002][]'] = fuel_type
     
-    plant_metadata = {}
+    plants = {}
     
     # Fetch data from API
-    while True:
+    while params['offset'] < 50000:  # Safety limit
         data = make_eia_request(PLANT_DATA_ENDPOINT, params)
-        records = data.get('response', {}).get('data', []) if data else []
-        
+        if not data:
+            break
+            
+        records = data.get('response', {}).get('data', [])
         if not records:
             break
             
-        # Extract plant metadata
+        # Extract basic plant info
         for record in records:
             plant_id = str(record.get('plantCode', ''))
-            # Skip if plant ID is not found or already in metadata
-            if not plant_id or plant_id in plant_metadata:
+            # Skip if plant ID is not found or already in list
+            if not plant_id or plant_id in plants:
                 continue
                 
-            plant_metadata[plant_id] = {
+            plants[plant_id] = {
                 'state': record.get('state', 'Unknown'),
                 'name': record.get('plantName', 'Unknown'),
                 'state_desc': record.get('stateDescription', 'Unknown')
             }
         
-        if len(records) < 5000:
+        if len(records) < params['length']:
             break
             
-        params['offset'] += 5000
+        params['offset'] += params['length']
         time.sleep(TIME_BETWEEN_REQUESTS)
     
-    return plant_metadata
+    logging.info(f"Found {len(plants)} unique plants")
+    return plants
 
 
-def limit_plant_list(plant_metadata, states=None, limit=None):
+def limit_plant_list(plant_list, states=None, limit=None):
     """
-    Limit the number of plants per state in the plant metadata.
+    Limit the number of plants per state.
     
     Args:
-        plant_metadata (dict): Dictionary mapping plant IDs to their metadata
+        plant_list (dict): Dictionary mapping plant IDs to basic info
         states (list): Optional list of states to filter by
         limit (int): Maximum number of plants per state
     
     Returns:
-        dict: Limited dictionary of plant metadata
+        dict: Limited dictionary of plants
     """
     if not limit:
-        return plant_metadata
+        return plant_list
         
     print(f"\nLimiting to {limit} plants per state...")
     
     # Group plants by state
     plants_by_state = {}
-    for pid, meta in plant_metadata.items():
-        state_code = meta.get('state')
+    for plant_id, info in plant_list.items():
+        state_code = info.get('state')
         # If states specified, only include those states
         if states and state_code not in states:
             continue
             
         if state_code not in plants_by_state:
             plants_by_state[state_code] = []
-        plants_by_state[state_code].append((pid, meta))
+        plants_by_state[state_code].append((plant_id, info))
     
     # Take first N plants from each state
-    limited_metadata = {}
+    limited_list = {}
     for state_code, plants in plants_by_state.items():
-        for pid, meta in plants[:limit]:
-            limited_metadata[pid] = meta
+        for plant_id, info in plants[:limit]:
+            limited_list[plant_id] = info
             
-    return limited_metadata
+    return limited_list
 
 
-def save_plant_metadata_lookup(plant_metadata, location_data, eia860_data, output_dir='plant_data'):
+def fetch_complete_plant_metadata(basic_plant_info, year=2023):
     """
-    Save or update plant metadata in master lookup table.
+    Enrich basic plant info with complete metadata from BA and EIA-860 sources.
+    Main thing we're doing here is joining the BA data with the following files:
+    The Plant file (2___Plant_*.xlsx) which has location data (lat/long, county, etc.) The Owner file (4___Owner_*.xlsx) which has ownership information
     
     Args:
-        plant_metadata (dict): Basic plant metadata (ID, name, state)
-        location_data (dict): BA and entity data from operating-generator-capacity
-        eia860_data (dict): Detailed EIA-860 data (lat/long, ownership, etc.)
-        output_dir (str): Base directory for data (lookup saved to output_dir/plant_lookup.csv)
+        basic_plant_info (dict): Dictionary of plant_id -> {name, state, state_desc}
+        year (int): Year for EIA-860 data
     
     Returns:
-        str: Path to the master metadata file
+        pd.DataFrame: Complete plant metadata including coordinates, BA, ownership
     """
-    # Master lookup file location
-    master_file = os.path.join(output_dir, 'plant_lookup.csv')
+    plant_ids = list(basic_plant_info.keys())
     
-    # Combine all metadata sources for current batch
-    current_plants_data = []
     
-    for plant_id, basic_info in plant_metadata.items():
-        # Start with basic info
-        plant_record = {
+    # 1. Get BA data from API
+    ba_data = fetch_balancing_authority_data(plant_ids)
+    print(f" found {len(ba_data)} plants")
+    
+    # 2. Get location and ownership data from EIA-860
+    location_ownership_data = fetch_eia860_location_ownership_data(year)
+    matching_860 = sum(1 for pid in plant_ids if pid in location_ownership_data)
+    print(f" found {matching_860} plants")
+    
+    # 3. Combine all data sources
+    records = []
+    for plant_id, basic_info in basic_plant_info.items():
+        record = {
             'plant_id': plant_id,
             'plant_name': basic_info.get('name'),
             'state': basic_info.get('state'),
             'state_name': basic_info.get('state_desc')
         }
         
-        # Add location/BA data
-        if plant_id in location_data:
-            loc_info = location_data[plant_id]
-            plant_record.update({
-                'balancing_authority_code': loc_info.get('balancing_authority_code'),
-                'balancing_authority_name': loc_info.get('balancing_authority_name'),
-                'entity_name': loc_info.get('entity_name'),
-                'entity_id': loc_info.get('entity_id'),
-                'sector': loc_info.get('sector'),
-                'technology': loc_info.get('technology')
-            })
+        # Add BA data if available
+        if plant_id in ba_data:
+            record.update(ba_data[plant_id])
         
-        # Add EIA-860 data
-        if plant_id in eia860_data:
-            eia_info = eia860_data[plant_id]
-            plant_record.update({
-                'latitude': eia_info.get('latitude'),
-                'longitude': eia_info.get('longitude'),
-                'county': eia_info.get('county'),
-                'zip_code': eia_info.get('zip_code'),
-                'street_address': eia_info.get('street_address'),
-                'city': eia_info.get('city'),
-                'balancing_authority_code_eia': eia_info.get('balancing_authority_code_eia'),
-                'balancing_authority_name_eia': eia_info.get('balancing_authority_name_eia'),
-                'nerc_region': eia_info.get('nerc_region'),
-                'primary_purpose': eia_info.get('primary_purpose')
+        # Add location/ownership data if available
+        if plant_id in location_ownership_data:
+            loc_own_info = location_ownership_data[plant_id]
+            record.update({
+                'latitude': loc_own_info.get('latitude'),
+                'longitude': loc_own_info.get('longitude'),
+                'county': loc_own_info.get('county'),
+                'zip_code': loc_own_info.get('zip_code'),
+                'street_address': loc_own_info.get('street_address'),
+                'city': loc_own_info.get('city'),
+                'balancing_authority_code_eia': loc_own_info.get('balancing_authority_code_eia'),
+                'balancing_authority_name_eia': loc_own_info.get('balancing_authority_name_eia'),
+                'nerc_region': loc_own_info.get('nerc_region'),
+                'primary_purpose': loc_own_info.get('primary_purpose')
             })
             
-            # Add owners as JSON string for CSV compatibility
-            if 'owners' in eia_info and eia_info['owners']:
+            # Handle ownership data
+            if 'owners' in loc_own_info and loc_own_info['owners']:
                 owner_strings = [f"{o['name']} ({o['percent_owned']}%)" 
-                               for o in eia_info['owners'] if o.get('name')]
-                plant_record['owners'] = '; '.join(owner_strings)
-            else:
-                plant_record['owners'] = ''
-                
-            # Add lat/long tuple
-            if pd.notna(plant_record.get('latitude')) and pd.notna(plant_record.get('longitude')):
-                plant_record['lat_lng_tuple'] = f"({plant_record['latitude']}, {plant_record['longitude']})"
+                               for o in loc_own_info['owners'] if o.get('name')]
+                record['owners'] = '; '.join(owner_strings)
+            
+            # Create lat/long tuple
+            if pd.notna(record.get('latitude')) and pd.notna(record.get('longitude')):
+                record['lat_lng_tuple'] = f"({record['latitude']}, {record['longitude']})"
         
-        # Add update timestamp
-        plant_record['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        current_plants_data.append(plant_record)
+        record['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d')
+        records.append(record)
     
-    # Update or create master lookup table
-    if os.path.exists(master_file):
-        # Load existing master
-        existing_df = pd.read_csv(master_file, dtype={'plant_id': str})
-        new_df = pd.DataFrame(current_plants_data)
+    return pd.DataFrame(records)
+
+
+def update_plant_lookup_table(new_plant_df, output_dir='plant_data'):
+    """
+    Update or create the master plant lookup table.
+    
+    Args:
+        new_plant_df (pd.DataFrame): New plant metadata to add/update
+        output_dir (str): Directory containing plant_lookup.csv
+    
+    Returns:
+        str: Path to the lookup file
+    """
+    lookup_file = os.path.join(output_dir, 'plant_lookup.csv')
+    
+    if os.path.exists(lookup_file):
+        # Load existing and merge
+        existing_df = pd.read_csv(lookup_file, dtype={'plant_id': str})
         
-        # Get plant IDs being updated
-        updating_plants = set(new_df['plant_id'])
+        # Remove plants we're updating from existing
+        plant_ids_to_update = set(new_plant_df['plant_id'])
+        kept_df = existing_df[~existing_df['plant_id'].isin(plant_ids_to_update)]
         
-        # Keep all plants not being updated
-        unchanged_df = existing_df[~existing_df['plant_id'].isin(updating_plants)]
+        # Combine and save
+        final_df = pd.concat([kept_df, new_plant_df], ignore_index=True)
+        final_df = final_df.sort_values('plant_id')
         
-        # Combine unchanged plants with new/updated plants
-        combined_df = pd.concat([unchanged_df, new_df], ignore_index=True).sort_values('plant_id')
-        
-        combined_df.to_csv(master_file, index=False)
-        logging.info(f"Updated {len(updating_plants)} plants in master lookup, total plants: {len(combined_df)}")
+        print(f"\nUpdated {len(plant_ids_to_update)} plants in lookup table")
     else:
-        # Create new master file
-        master_df = pd.DataFrame(current_plants_data)
-        master_df.to_csv(master_file, index=False)
-        logging.info(f"Created master lookup with {len(current_plants_data)} plants")
+        final_df = new_plant_df.sort_values('plant_id')
+        print(f"\nCreated new lookup table with {len(final_df)} plants")
     
-    # Show summary of what states are in the lookup
-    if os.path.exists(master_file):
-        df = pd.read_csv(master_file)
-        state_counts = df['state'].value_counts().to_dict()
-        print(f"\nMaster lookup contains {len(df)} plants across {len(state_counts)} states:")
-        for state, count in sorted(state_counts.items()):
-            print(f"  {state}: {count} plants")
+    final_df.to_csv(lookup_file, index=False)
     
-    return master_file
+    # Show summary
+    state_summary = final_df['state'].value_counts()
+    print(f"Total: {len(final_df)} plants across {len(state_summary)} states")
+    
+    return lookup_file
 
 
 def download_plant_data(plant_id, start_date, end_date, data_type='generation', 
@@ -528,28 +531,24 @@ def download_plant_data(plant_id, start_date, end_date, data_type='generation',
             
         time.sleep(0.1)
     
-    if all_data:
-        os.makedirs(save_dir, exist_ok=True)
-        
-        df = pd.DataFrame(all_data)
-        
-        # Convert period to datetime for sorting
-        df['period'] = pd.to_datetime(df['period'], format='%Y-%m')
-        
-        # Sort by period (chronological order) and then by other columns for consistency
-        df = df.sort_values(['period', 'fuel2002', 'primeMover'], na_position='last')
-        
-        # Convert period back to string format
-        df['period'] = df['period'].dt.strftime('%Y-%m')
-        
-        # Save to CSV with just the time-series data
-        df.to_csv(output_file, index=False)
-        
-        logging.info(f"Saved {len(df)} records for plant {plant_id} to {output_file}")
-        return df
-    else:
+    # Exit early if no data found
+    if not all_data:
         logging.warning(f"No data found for plant {plant_id}")
         return None
+    
+    os.makedirs(save_dir, exist_ok=True)
+    
+    df = pd.DataFrame(all_data)
+    # Convert period to datetime for sorting
+    df['period'] = pd.to_datetime(df['period'], format='%Y-%m') 
+    # Sort by period (chronological order) and then by other columns for consistency
+    df = df.sort_values(['period', 'fuel2002', 'primeMover'], na_position='last')
+    # Convert period back to string format
+    df['period'] = df['period'].dt.strftime('%Y-%m')
+    df.to_csv(output_file, index=False)
+    logging.info(f"Saved {len(df)} records for plant {plant_id} to {output_file}")
+    
+    return df
 
 
 def load_and_merge_plant_data(csv_file, lookup_file='plant_data/plant_lookup.csv'):
@@ -605,7 +604,7 @@ Examples:
   python download_plant_data.py --states TX --start 2023-01 --end 2023-12
   
   # Download plants in multiple states (organized by state folders)
-  python download_plant_data.py --states TX CA --years 2023
+  python download_plant_data.py --states TX CA --start 2023-01 --end 2023-12
   
   # Download all plants with specific fuel type
   python download_plant_data.py --fuel NG --start 2023-01 --end 2023-12
@@ -613,14 +612,11 @@ Examples:
   # Download plants in state with specific fuel type
   python download_plant_data.py --states CA --fuel SUN --start 2023-01 --end 2023-12
   
-  # Download specific years
-  python download_plant_data.py --states TX --years 2022 2023 2024
-  
   # Download different data types (generation, consumption, receipts)
   python download_plant_data.py --states TX --start 2023-01 --end 2023-12 --data-type consumption
   
   # Skip existing files
-  python download_plant_data.py --states TX --years 2023 --skip-existing
+  python download_plant_data.py --states TX --start 2023-01 --end 2023-12 --skip-existing
   
 Note: Data is automatically enriched with:
   - Balancing authority assignments
@@ -631,12 +627,10 @@ Note: Data is automatically enriched with:
     )
     
     # Date options
-    parser.add_argument('--start', type=str,
+    parser.add_argument('--start', type=str, required=True,
                        help='Start date (YYYY-MM format for monthly data)')
-    parser.add_argument('--end', type=str,
+    parser.add_argument('--end', type=str, required=True,
                        help='End date (YYYY-MM format for monthly data)')
-    parser.add_argument('--years', type=int, nargs='+',
-                       help='Download complete years (e.g., --years 2022 2023)')
     
     # Plant selection options
     parser.add_argument('--states', type=str, nargs='+', choices=STATES,
@@ -667,69 +661,35 @@ def main():
     if not validate_api_key():
         return
     
-    # Get relevant plants
-    plant_metadata = get_plant_list_with_metadata(
+    # Get basic plant list
+    plant_list = get_plant_list(
         states=args.states,
         fuel_type=args.fuel
     )
-    if not plant_metadata:
+    if not plant_list:
         return
         
-    # Apply limit if specified before downloading 
+    # Apply limit if specified 
     if args.limit:
-        plant_metadata = limit_plant_list(plant_metadata, states=args.states, limit=args.limit)
+        plant_list = limit_plant_list(plant_list, states=args.states, limit=args.limit)
     
-    # Fetch additional metadata
-    print("\nFetching additional metadata...")
-    print("  - Fetching balancing authority data from API...")
-    location_data = get_plant_location_data(list(plant_metadata.keys()))
-    print(f"    Found BA data for {len(location_data)} plants")
-    
-    # Get detailed plant data from EIA-860 files using the most recent year from the date range
-    print("  - Downloading EIA-860 data (lat/long, ownership)...")
-    year = int(args.end.split('-')[0] if args.end else args.years[-1] if args.years else 2023)
-    eia860_data = download_eia860_plant_data(year)
-    print(f"    Found EIA-860 data for {len(eia860_data)} plants")
-    
-    # Save all metadata to lookup table
-    print("\nSaving plant metadata to lookup table...")
-    lookup_file = save_plant_metadata_lookup(plant_metadata, location_data, eia860_data, args.output.rsplit('/raw', 1)[0])
-    print(f"  Saved to: {lookup_file}")
+    # Enrich with complete metadata and save to lookup table (Use start year for EIA-860 data)
+    year = int(args.start.split('-')[0])
+    complete_metadata_df = fetch_complete_plant_metadata(plant_list, year)
+    base_dir = args.output.rsplit('/raw', 1)[0] if '/raw' in args.output else args.output
+    update_plant_lookup_table(complete_metadata_df, base_dir)
     
     # Download time-series data for found plants
-    if args.years:
-        for year in args.years:
-            start_date = f"{year}-01"
-            end_date = f"{year}-12"
-            
-            print(f"\nDownloading {args.data_type} data for {year}")
-            for plant_id, metadata in tqdm(plant_metadata.items(), 
-                                          desc=f"Plants ({year})"):
-                download_plant_data(
-                    plant_id, start_date, end_date,
-                    data_type=args.data_type,
-                    output_dir=args.output,
-                    skip_existing=args.skip_existing,
-                    state=metadata.get('state')
-                )
-                time.sleep(TIME_BETWEEN_REQUESTS)  # Rate limiting
-                
-    elif args.start and args.end:
-        print(f"\nDownloading {args.data_type} data from {args.start} to {args.end}")
-        for plant_id, metadata in tqdm(plant_metadata.items(), desc="Plants"):
-            download_plant_data(
-                plant_id, args.start, args.end,
-                data_type=args.data_type,
-                output_dir=args.output,
-                skip_existing=args.skip_existing,
-                state=metadata.get('state')
-            )
-            time.sleep(TIME_BETWEEN_REQUESTS)  # Rate limiting
-            
-    else:
-        print("Error: Must specify either --start/--end or --years")
-        print("Use --help for examples")
-        return
+    print(f"\nDownloading {args.data_type} data from {args.start} to {args.end}")
+    for plant_id, basic_info in tqdm(plant_list.items(), desc="Plants"):
+        download_plant_data(
+            plant_id, args.start, args.end,
+            data_type=args.data_type,
+            output_dir=args.output,
+            skip_existing=args.skip_existing,
+            state=basic_info.get('state')
+        )
+        time.sleep(TIME_BETWEEN_REQUESTS)  # Rate limiting
     
     print("\nDownload complete!")
 
