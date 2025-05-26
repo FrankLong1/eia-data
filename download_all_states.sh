@@ -43,11 +43,12 @@ for state in "${states[@]}"; do
     echo "[$completed/$total] Processing state: $state"
     echo "========================================="
     
-    # Run the download command for this state
+    # Run the download command for this state (with optimized batch size)
     python -m src.data_fetching.download_plant_data \
         --states "$state" \
         --start "$START_YEAR" \
-        --end "$END_YEAR"
+        --end "$END_YEAR" \
+        --batch-size 200
     
     # Check if the command was successful
     if [ $? -eq 0 ]; then
