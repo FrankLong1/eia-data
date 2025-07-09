@@ -1,88 +1,132 @@
-# EIA Power Grid Analysis
+# EIA Curtailment Analysis
 
-This project analyzes U.S. electricity generation patterns to assess opportunities for integrating large flexible loads (like data centers) into the power grid. Based on the research paper "Rethinking Load Growth" by Norris et al. (2025), it reproduces the data pipeline described in the paper, as well as extending the analysis from balancing authority aggregates to individual power plant data.
+A clean, focused implementation of the curtailment analysis methodology from "Rethinking Load Growth: Assessing the Potential for Integration of Large Flexible Loads in US Power Systems" (Norris et al., 2025).
 
-## What This Project Does
+## Overview
 
-1. **Downloads comprehensive electricity data** from the EIA API
-   - Hourly demand data for 22 major balancing authorities (2016-2024)
-   - Monthly generation data for individual power plants across all U.S. states
-   
-2. **Analyzes curtailment potential** to identify opportunities for flexible load integration
-   - Calculates "curtailment-enabled headroom" where new loads can operate without grid upgrades
-   - Maps generation patterns to find optimal locations for data centers
+This project analyzes curtailment-enabled headroom across 22 US balancing authorities to determine how much additional flexible load can be integrated at different curtailment rates. The analysis uses hourly demand data from EIA-930 to calculate the potential for large flexible loads like data centers to utilize excess grid capacity.
 
-3. **Provides actionable insights** for grid operators and large electricity consumers
-   - Identifies when and where excess generation capacity exists
-   - Quantifies the potential for load flexibility to improve grid utilization
+## Key Findings
+
+The analysis shows that US power systems have significant headroom for flexible loads:
+- **98 GW** of additional load at 0.5% annual curtailment
+- **126 GW** at 1.0% curtailment  
+- **215 GW** at 5.0% curtailment
+
+Top 5 balancing authorities by headroom potential (0.5% curtailment):
+1. PJM: 18 GW
+2. MISO: 15 GW  
+3. ERCOT: 10 GW
+4. SPP: 10 GW
+5. SOCO: 8 GW
 
 ## Quick Start
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+1. **Setup Environment**:
+   ```bash
+   pip install -r requirements.txt
+   cp .env.template .env
+   # Add your EIA API key to .env
+   ```
 
-# 2. Set up your EIA API key (get one free at https://www.eia.gov/opendata/register.php)
-cp .env.template .env
-# Edit .env and add your API key
+2. **Run Complete Analysis**:
+   ```bash
+   python run_analysis.py --full
+   ```
 
-# 3. Download some sample data
-python src/data_fetching/download_ba_aggregate_data.py --bas PJM --years 2023
-
-# 4. Run the analysis pipeline
-python src/data_cleaning/run_ba_aggregate_cleaning.py
-python src/data_analysis/run_ba_aggregate_curtailment_analysis.py
-```
+3. **Test with Sample Data**:
+   ```bash
+   python run_analysis.py --bas PJM --start 2023-10-01 --end 2023-12-31
+   ```
 
 ## Project Structure
 
 ```
-eia-data/
-├── src/                        # Source code
-│   ├── data_fetching/         # Download data from EIA API
-│   ├── data_cleaning/         # Clean and validate data
-│   └── data_analysis/         # Analyze curtailment potential
+eia-curtailment-analysis/
+├── README.md              # This file
+├── requirements.txt       # Python dependencies
+├── config.py             # Configuration settings
+├── run_analysis.py       # Main analysis pipeline
 │
-├── ba_aggregate_data/         # Balancing authority data
-│   ├── raw/                   # Raw downloaded data
-│   ├── cleaned/              # Processed data
-│   └── visualizations/       # Analysis results
+├── src/                  # Core modules
+│   ├── download.py       # EIA data download
+│   ├── clean.py          # Data cleaning & validation
+│   ├── analyze.py        # Curtailment analysis
+│   └── visualize.py      # Plot generation
 │
-└── plant_data/               # Individual plant data
-    ├── raw_plant_generation_data/  # Monthly generation by plant
-    └── plant_lookup.csv           # Plant metadata (location, ownership)
+└── data/                 # Data storage
+    ├── raw/              # Downloaded EIA data
+    ├── cleaned/          # Processed data
+    └── results/          # Analysis outputs & plots
 ```
 
-## Two Analysis Modes
+## Usage
 
-### 1. Balancing Authority Analysis
-Analyzes hourly demand data for 22 major balancing authorities (RTOs/ISOs and major utilities):
+### Basic Commands
+
 ```bash
-# Download BA data (e.g., PJM for 2023)
-python src/data_fetching/download_ba_aggregate_data.py --bas PJM --years 2023
+# Download and analyze specific BAs
+python run_analysis.py --bas PJM MISO --years 2022 2023
 
-# Run analysis pipeline
-python src/data_cleaning/run_ba_aggregate_cleaning.py
-python src/data_analysis/run_ba_aggregate_curtailment_analysis.py
+# Run analysis on existing data
+python run_analysis.py --analyze-only
+
+# Generate only visualizations
+python run_analysis.py --visualize-only
 ```
 
-### 2. Plant-Level Analysis
-Analyzes monthly generation data for individual power plants:
+### Advanced Usage
+
 ```bash
-# Download plant data (e.g., all Texas plants for 2020-2023)
-python src/data_fetching/download_plant_data.py --states TX --start 2020 --end 2023
+# Custom date range
+python run_analysis.py --start 2023-01-01 --end 2023-12-31
 
-# Analysis tools coming soon
+# Download only (no analysis)
+python run_analysis.py --download-only --all
+
+# Skip existing files
+python run_analysis.py --skip-existing
 ```
 
-## Data Sources
+## Methodology
 
-- **Balancing Authority Data**: Hourly electricity demand from EIA's Electric Grid Monitor
-- **Plant Data**: Monthly generation data and plant characteristics from EIA's facility-level APIs
-- **Coverage**: 22 major balancing authorities covering ~80% of U.S. electricity demand
+The analysis follows the research paper's methodology:
 
-## References
+1. **Data Collection**: Download hourly demand data from EIA-930 for 22 balancing authorities
+2. **Data Cleaning**: Remove outliers using IQR method, interpolate missing values
+3. **Curtailment Analysis**: Calculate headroom at standard rates (0.25%, 0.5%, 1.0%, 5.0%)
+4. **Visualization**: Generate publication-ready plots and summary statistics
 
-- [Research Paper: "Rethinking Load Growth"](https://nicholasinstitute.duke.edu/publications/rethinking-load-growth) (Nicholas Institute, 2025)
-- [EIA API Documentation](https://www.eia.gov/opendata/documentation.php)
-- [EIA Electric Grid Monitor](https://www.eia.gov/electricity/gridmonitor/)
+### Balancing Authorities (22 total)
+
+**RTOs/ISOs**: PJM, MISO, ERCOT, SPP, CAISO, ISO-NE, NYISO  
+**Utilities**: SOCO, DEC, DEP, DEF, TVA, BPA, AZPS, FPL, PACE, PACW, PGE, PSCO, SRP, DESC, SCP
+
+## API Setup
+
+1. Get a free API key from https://www.eia.gov/opendata/register.php
+2. Copy `.env.template` to `.env`
+3. Add your key: `EIA_API_KEY=your_key_here`
+
+## Output
+
+The analysis generates:
+- **CSV files**: Curtailment headroom results by BA and curtailment rate
+- **Visualizations**: Load duration curves, headroom comparisons, seasonal patterns
+- **Summary statistics**: System-wide metrics and BA-specific details
+
+## Dependencies
+
+Core requirements:
+- pandas, numpy: Data manipulation
+- matplotlib, seaborn: Visualization
+- requests: API calls
+- python-dotenv: Environment variables
+
+See `requirements.txt` for complete list.
+
+## Citation
+
+If you use this analysis, please cite the original research:
+
+Norris, T. H., T. Profeta, D. Patino-Echeverri, and A. Cowie-Haskell. 2025. Rethinking Load Growth: Assessing the Potential for Integration of Large Flexible Loads in US Power Systems. NI R 25-01. Durham, NC: Nicholas Institute for Energy, Environment & Sustainability, Duke University.

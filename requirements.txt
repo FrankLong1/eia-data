@@ -1,8 +1,17 @@
+# Core data processing
 pandas>=2.0.0
 numpy>=1.24.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# API and network
 requests>=2.31.0
 python-dotenv>=1.0.0
-scipy>=1.10.0
-matplotlib>=3.7.0
+
+# Progress tracking
 tqdm>=4.65.0
-openpyxl>=3.1.0
+
+# Data analysis
+scipy>=1.10.0

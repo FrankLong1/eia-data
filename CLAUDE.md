@@ -1,115 +1,114 @@
-# EIA Data Project - Operational Guide
+# EIA Curtailment Analysis - Operational Guide
+
+## CRITICAL SETUP REQUIREMENTS
+
+### 1. Virtual Environment (REQUIRED)
+**MUST create and activate virtual environment before running any code:**
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment (do this EVERY time)
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. API Key Setup (REQUIRED)
+```bash
+# Copy template and add your EIA API key
+cp .env.template .env
+# Edit .env and add: EIA_API_KEY=your_key_here
+```
+
+Get free API key at: https://www.eia.gov/opendata/register.php
 
 ## Key Project Files
 
 - **README.md**: High-level project overview for human readers
-- **ROADMAP.md**: Detailed development roadmap with phases and dependencies
-- **rethinking-load-growth-paper.md**: Source research paper (Norris et al., 2025) that this project implements and extends
-- **.env.template**: Template for API key configuration
+- **rethinking-load-growth-paper.md**: Source research paper (Norris et al., 2025) that this project implements
+- **config.py**: Configuration settings for the analysis
+- **run_analysis.py**: Main analysis pipeline script
 - **requirements.txt**: Python dependencies
 
-## Project Structure & File Guide
+## Refactored Project Structure
 
-NOTE: this may be out of date, but wanted to give you some sign posting so you don't have to look up every file every time.
-
-NOTE: the data directories like plant_data and ba_aggregate_data are in gitignore but you can find them in here
+**CLEAN, FOCUSED STRUCTURE - PAPER IMPLEMENTATION ONLY**
 
 ```
-eia-data/
-├── README.md                    # Project overview and quick start guide
-├── CLAUDE.md                   # This file - operational guide for development
-├── ROADMAP.md                  # Development roadmap with sequential tasks
+eia-curtailment-analysis/
+├── README.md              # Project overview and quick start guide
+├── CLAUDE.md             # This file - operational guide for development
 ├── rethinking-load-growth-paper.md  # Research paper we're implementing
-├── requirements.txt            # Python dependencies
-├── .env                        # API key configuration (create from .env.template)
+├── requirements.txt      # Python dependencies
+├── .env                  # API key configuration (create from .env.template)
+├── config.py             # Configuration settings
+├── run_analysis.py       # Main analysis pipeline
+├── venv/                 # Virtual environment (REQUIRED)
 │
-├── config/                     # Configuration module
-│   ├── __init__.py
-│   └── config.py              # Central settings: API keys, BA lists, date ranges
+├── src/                  # 4 core modules only
+│   ├── download.py       # EIA BA data download
+│   ├── clean.py          # Data cleaning & validation
+│   ├── analyze.py        # Curtailment analysis
+│   └── visualize.py      # Plot generation
 │
-├── src/                        # Source code modules
-│   ├── __init__.py
-│   ├── utils/                 # Shared utilities
-│   │   ├── api.py            # EIA API wrapper functions
-│   │   ├── constants.py      # FUEL_TYPES, STATES, BA codes
-│   │   └── formatting.py     # Data formatting helpers
-│   │
-│   ├── data_fetching/         # Download modules
-│   │   ├── download_ba_aggregate_data.py  # Hourly BA demand data
-│   │   └── download_plant_data.py         # Monthly plant generation data
-│   │
-│   ├── data_cleaning/         # Data validation and cleaning
-│   │   ├── BAAggregateCleaner.py         # BA data cleaning class
-│   │   ├── run_ba_aggregate_cleaning.py   # BA cleaning runner script
-│   │   └── PlantDataCleaner.py          # Plant data cleaning (TODO)
-│   │
-│   └── data_analysis/         # Analysis modules
-│       ├── BAAggregateCurtailmentAnalyzer.py      # BA curtailment analysis
-│       ├── run_ba_aggregate_curtailment_analysis.py # BA analysis runner
-│       ├── PlantCurtailmentAnalyzer.py            # Plant curtailment (TODO)
-│       └── summarize_plant_data_by_state.py       # State summaries (TODO)
-│
-├── ba_aggregate_data/         # Balancing authority data directory
-│   ├── raw/                   # Raw hourly demand CSVs: {BA}_{YEAR}.csv
-│   ├── cleaned/              # Cleaned/interpolated data
-│   └── visualizations/       # Plots and analysis outputs
-│
-├── plant_data/               # Individual plant data directory
-│   ├── raw_plant_generation_data/  # Monthly generation data
-│   │   └── {STATE}/              # State subdirectories
-│   │       └── {PLANT_ID}_{YEAR}_generation.csv
-│   ├── plant_lookup.csv          # Master metadata file (location, BA, ownership)
-│   └── eia860_downloads/         # Cached EIA-860 zip files
-│
-└── tests/                     # Test modules
-    ├── test_ba_aggregate_api.py
-    ├── test_ba_aggregate_cleaner.py
-    └── test_plant_location_endpoints.py
+└── data/                 # Data storage
+    ├── raw/              # Downloaded EIA data
+    ├── cleaned/          # Processed data
+    └── results/          # Analysis outputs & plots
 ```
 
 
 
 ## Common Commands
 
-### BA Aggregate Analysis Pipeline
+**ALWAYS activate virtual environment first:**
 ```bash
-# Download data
-python src/data_fetching/download_ba_aggregate_data.py --bas PJM MISO --years 2023 2024
-python src/data_fetching/download_ba_aggregate_data.py --all  # Download everything (takes hours)
-
-# Clean data (processes all downloaded raw data)
-python src/data_cleaning/run_ba_aggregate_cleaning.py
-
-# Run curtailment analysis
-python src/data_analysis/run_ba_aggregate_curtailment_analysis.py
-
-# Quick test with 3 months of data
-python src/data_fetching/download_ba_aggregate_data.py --bas PJM --start 2023-10-01 --end 2023-12-31
+source venv/bin/activate
 ```
 
-### Plant-Level Data Pipeline
+### Complete Analysis Pipeline
 ```bash
-# Download plant data by state
-python src/data_fetching/download_plant_data.py --states TX CA --start 2020 --end 2023
+# Run complete analysis (download → clean → analyze → visualize)
+python run_analysis.py --full
 
-# Download with specific fuel type
-python src/data_fetching/download_plant_data.py --states CA --fuel SUN --start 2018 --end 2023
+# Quick test with 3 months of PJM data
+python run_analysis.py --bas PJM --start 2023-10-01 --end 2023-12-31
 
-# Force re-download existing files
-python src/data_fetching/download_plant_data.py --states TX --start 2020 --end 2023 --force-download
-
-# Increase batch size for faster downloads
-python src/data_fetching/download_plant_data.py --states TX CA --start 2020 --end 2023 --batch-size 250
+# Download and analyze specific BAs for specific years
+python run_analysis.py --bas PJM MISO --years 2022 2023
 ```
 
-### Common Analysis Tasks
+### Individual Pipeline Phases
 ```bash
-# Summarize plant data by state (when implemented)
-python src/data_analysis/summarize_plant_data_by_state.py
+# Download only (all 22 BAs, 2016-2024)
+python run_analysis.py --download-only --all
 
-# Test API endpoints
-python test_plant_location_endpoints.py
-python test_utils.py
+# Download specific BAs and years
+python run_analysis.py --download-only --bas PJM MISO --years 2023 2024
+
+# Clean existing downloaded data
+python run_analysis.py --clean-only
+
+# Analyze existing cleaned data
+python run_analysis.py --analyze-only
+
+# Generate visualizations only
+python run_analysis.py --visualize-only
+```
+
+### Advanced Usage
+```bash
+# Custom date range
+python run_analysis.py --start 2023-01-01 --end 2023-12-31
+
+# Skip existing files during download
+python run_analysis.py --skip-existing
+
+# Process subset of BAs
+python run_analysis.py --bas ERCO CISO SPP --years 2023
 ```
 
 ## Code Patterns and Conventions
