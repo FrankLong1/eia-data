@@ -120,7 +120,7 @@ class CurtailmentVisualizer:
         providing insights into system load patterns and peak demand frequency.
         
         Args:
-            ba_data: DataFrame with 'Timestamp' and 'Unified Demand' columns
+            ba_data: DataFrame with 'Timestamp' and 'Demand' columns
             ba_name: Name of the balancing authority
             show_seasonal_peaks: Whether to show seasonal peak lines
             figsize: Figure size as (width, height)
@@ -131,7 +131,7 @@ class CurtailmentVisualizer:
         fig, ax = plt.subplots(figsize=figsize)
         
         # Sort demand values in descending order
-        sorted_demand = ba_data['Unified Demand'].sort_values(ascending=False).values
+        sorted_demand = ba_data['Demand'].sort_values(ascending=False).values
         hours = np.arange(1, len(sorted_demand) + 1)
         
         # Convert to percentage of year
@@ -149,11 +149,11 @@ class CurtailmentVisualizer:
             
             # Summer peak (June-August)
             summer_data = ba_data_temp[ba_data_temp['Month'].isin([6, 7, 8])]
-            summer_peak = summer_data['Unified Demand'].max() / 1000 if not summer_data.empty else 0
+            summer_peak = summer_data['Demand'].max() / 1000 if not summer_data.empty else 0
             
             # Winter peak (December-February)
             winter_data = ba_data_temp[ba_data_temp['Month'].isin([12, 1, 2])]
-            winter_peak = winter_data['Unified Demand'].max() / 1000 if not winter_data.empty else 0
+            winter_peak = winter_data['Demand'].max() / 1000 if not winter_data.empty else 0
             
             # Add peak lines
             ax.axhline(y=summer_peak, color='red', linestyle='--', alpha=0.7, 
@@ -265,7 +265,7 @@ class CurtailmentVisualizer:
         Create seasonal curtailment analysis showing monthly patterns.
         
         Args:
-            ba_data: DataFrame with 'Timestamp' and 'Unified Demand' columns
+            ba_data: DataFrame with 'Timestamp' and 'Demand' columns
             ba_name: Name of the balancing authority
             load_addition: Additional load in MW
             figsize: Figure size as (width, height)
@@ -283,8 +283,8 @@ class CurtailmentVisualizer:
         ba_data_temp['DayOfYear'] = ba_data_temp['Timestamp'].dt.dayofyear
         
         # Calculate seasonal peaks
-        summer_peak = ba_data_temp[ba_data_temp['Month'].isin([6, 7, 8])]['Unified Demand'].max()
-        winter_peak = ba_data_temp[ba_data_temp['Month'].isin([12, 1, 2])]['Unified Demand'].max()
+        summer_peak = ba_data_temp[ba_data_temp['Month'].isin([6, 7, 8])]['Demand'].max()
+        winter_peak = ba_data_temp[ba_data_temp['Month'].isin([12, 1, 2])]['Demand'].max()
         
         # Determine seasonal threshold for each hour
         ba_data_temp['Seasonal_Threshold'] = ba_data_temp['Month'].apply(
@@ -292,7 +292,7 @@ class CurtailmentVisualizer:
         )
         
         # Calculate curtailment with load addition
-        ba_data_temp['Augmented_Demand'] = ba_data_temp['Unified Demand'] + load_addition
+        ba_data_temp['Augmented_Demand'] = ba_data_temp['Demand'] + load_addition
         ba_data_temp['Curtailment'] = np.maximum(0, ba_data_temp['Augmented_Demand'] - ba_data_temp['Seasonal_Threshold'])
         ba_data_temp['Curtailment_Rate'] = ba_data_temp['Curtailment'] / load_addition
         
@@ -318,12 +318,12 @@ class CurtailmentVisualizer:
         
         # Plot 3: Seasonal load and threshold comparison
         seasonal_stats = ba_data_temp.groupby('Month').agg({
-            'Unified Demand': 'mean',
+            'Demand': 'mean',
             'Seasonal_Threshold': 'first',
             'Augmented_Demand': 'mean'
         }) / 1000  # Convert to GW
         
-        ax3.plot(seasonal_stats.index, seasonal_stats['Unified Demand'], 
+        ax3.plot(seasonal_stats.index, seasonal_stats['Demand'], 
                 label='Original Demand', color='blue', linewidth=2)
         ax3.plot(seasonal_stats.index, seasonal_stats['Augmented_Demand'], 
                 label='With Additional Load', color='red', linewidth=2)
@@ -621,7 +621,7 @@ class CurtailmentVisualizer:
         largest_ba = results_df.groupby('BA')['Max_Load_Addition_GW'].max().idxmax()
         if largest_ba in ba_data_dict:
             ba_data = ba_data_dict[largest_ba]
-            sorted_demand = ba_data['Unified Demand'].sort_values(ascending=False).values
+            sorted_demand = ba_data['Demand'].sort_values(ascending=False).values
             hours_pct = np.linspace(0, 100, len(sorted_demand))
             ax4.plot(hours_pct, sorted_demand / 1000, color=self._get_ba_color(largest_ba), linewidth=2)
             ax4.set_xlabel('Hours of Year (%)')
@@ -692,8 +692,8 @@ def calculate_ba_demand_statistics(ba_data_dict: Dict[str, pd.DataFrame]) -> pd.
     stats_list = []
     
     for ba, data in ba_data_dict.items():
-        if 'Unified Demand' in data.columns:
-            demand = data['Unified Demand']
+        if 'Demand' in data.columns:
+            demand = data['Demand']
             
             # Calculate statistics
             avg_demand = demand.mean()

@@ -80,6 +80,7 @@ DEFAULT_END_DATE = "2023-12-31"
 
 # API rate limiting
 API_DELAY_SECONDS = 0.1  # Delay between API requests
+EIA_MAX_RECORDS_PER_REQUEST = 5000  # EIA-imposed maximum records per API request
 
 # Data quality thresholds
 MAX_MISSING_HOURS = 24  # Maximum consecutive missing hours to interpolate

@@ -104,8 +104,8 @@ python run_analysis.py --visualize-only
 # Custom date range
 python run_analysis.py --start 2023-01-01 --end 2023-12-31
 
-# Skip existing files during download
-python run_analysis.py --skip-existing
+# Force re-download of existing files (default: skip existing)
+python run_analysis.py --force-redownload
 
 # Process subset of BAs
 python run_analysis.py --bas ERCO CISO SPP --years 2023
@@ -160,7 +160,7 @@ Note: Codes in parentheses are EIA API codes that differ from paper notation.
 5. Peak demand validation
 
 ### Performance Optimization
-- Skip existing files by default (`--skip-existing`)
+- Skip existing files by default (use `--force-redownload` to override)
 - Batch API requests (200 plants per request)
 - Parallel processing where possible
 - Cache EIA-860 zip files locally

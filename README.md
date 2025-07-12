@@ -26,7 +26,7 @@ Top 5 balancing authorities by headroom potential (0.5% curtailment):
    ```bash
    pip install -r requirements.txt
    cp .env.template .env
-   # Add your EIA API key to .env
+   # Add your EIA API key to .env # Get your free API key from: https://www.eia.gov/opendata/register.php
    ```
 
 2. **Run Complete Analysis**:
@@ -84,8 +84,8 @@ python run_analysis.py --start 2023-01-01 --end 2023-12-31
 # Download only (no analysis)
 python run_analysis.py --download-only --all
 
-# Skip existing files
-python run_analysis.py --skip-existing
+# Force re-download of existing files
+python run_analysis.py --force-redownload
 ```
 
 ## Methodology

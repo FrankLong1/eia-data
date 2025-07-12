@@ -9,9 +9,9 @@ EIA_API_KEY = os.getenv("EIA_API_KEY", "")  # Set your EIA API key as environmen
 
 # Balancing Authorities
 BALANCING_AUTHORITIES = [
-    "PJM", "MISO", "ERCOT", "SPP", "SOCO", "CAISO", "ISO-NE", "NYISO",
-    "DEC", "DEP", "DEF", "TVA", "BPA", "AZPS", "FPL", "PACE",
-    "PACW", "PGE", "PSCO", "SRP", "DESC", "SCP"
+    "PJM", "MISO", "ERCO", "SWPP", "SOCO", "CISO", "ISNE", "NYIS",
+    "DUK", "CPLE", "FPC", "TVA", "BPAT", "AZPS", "FPL", "PACE",
+    "PACW", "PGE", "PSCO", "SRP", "SCEG", "SC"
 ]
 
 # Date Range
@@ -21,7 +21,9 @@ END_DATE = "2024-12-31"
 # Data Paths
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 RAW_DATA_DIR = os.path.join(DATA_DIR, "raw")
+CLEANED_DATA_DIR = os.path.join(DATA_DIR, "cleaned")
 PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
+RESULTS_DIR = os.path.join(DATA_DIR, "results")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # Data Cleaning Parameters (from Appendix B)
@@ -49,5 +51,5 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 OUTPUT_FORMATS = ["csv", "parquet"]  # Supported output formats
 
 # Create directories if they don't exist
-for directory in [RAW_DATA_DIR, PROCESSED_DATA_DIR, OUTPUT_DIR]:
+for directory in [RAW_DATA_DIR, CLEANED_DATA_DIR, PROCESSED_DATA_DIR, RESULTS_DIR, OUTPUT_DIR]:
     os.makedirs(directory, exist_ok=True)

@@ -63,7 +63,7 @@ class CurtailmentAnalyzer:
             data: DataFrame with columns:
                   - Timestamp: datetime
                   - Balancing Authority: BA name
-                  - Unified Demand: demand in MW
+                  - Demand: demand in MW
         """
         self.data = data.copy()
         self.seasonal_peaks = {}
@@ -74,13 +74,13 @@ class CurtailmentAnalyzer:
             self.data['Timestamp'] = pd.to_datetime(self.data['Timestamp'])
         
         # Validate required columns
-        required_columns = ['Timestamp', 'Balancing Authority', 'Unified Demand']
+        required_columns = ['Timestamp', 'Balancing Authority', 'Demand']
         missing_cols = [col for col in required_columns if col not in self.data.columns]
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
         
         # Remove any rows with missing critical data
-        self.data = self.data.dropna(subset=['Timestamp', 'Balancing Authority', 'Unified Demand'])
+        self.data = self.data.dropna(subset=['Timestamp', 'Balancing Authority', 'Demand'])
         
         # Calculate seasonal peaks and load factors for all BAs
         self._calculate_seasonal_peaks()
@@ -105,12 +105,12 @@ class CurtailmentAnalyzer:
             summer_data = ba_data[ba_data['Month'].isin(SUMMER_MONTHS)]
             winter_data = ba_data[ba_data['Month'].isin(WINTER_MONTHS)]
             
-            summer_peak = summer_data['Unified Demand'].max() if not summer_data.empty else 0
-            winter_peak = winter_data['Unified Demand'].max() if not winter_data.empty else 0
+            summer_peak = summer_data['Demand'].max() if not summer_data.empty else 0
+            winter_peak = winter_data['Demand'].max() if not winter_data.empty else 0
             
             # Handle edge cases where seasonal data might be missing
             if summer_peak == 0 and winter_peak == 0:
-                overall_peak = ba_data['Unified Demand'].max()
+                overall_peak = ba_data['Demand'].max()
                 summer_peak = winter_peak = overall_peak
             elif summer_peak == 0:
                 summer_peak = winter_peak
@@ -129,8 +129,8 @@ class CurtailmentAnalyzer:
             if ba_data.empty:
                 continue
                 
-            avg_demand = ba_data['Unified Demand'].mean()
-            peak_demand = ba_data['Unified Demand'].max()
+            avg_demand = ba_data['Demand'].mean()
+            peak_demand = ba_data['Demand'].max()
             
             load_factor = avg_demand / peak_demand if peak_demand > 0 else 0
             self.load_factors[ba] = load_factor
@@ -179,7 +179,7 @@ class CurtailmentAnalyzer:
             return None
         
         # Add new load to existing demand
-        ba_data['Augmented_Demand'] = ba_data['Unified Demand'] + load_addition
+        ba_data['Augmented_Demand'] = ba_data['Demand'] + load_addition
         
         # Get seasonal threshold for each hour
         ba_data['Seasonal_Threshold'] = ba_data['Timestamp'].apply(
@@ -215,7 +215,7 @@ class CurtailmentAnalyzer:
             return {}
         
         # Add new load and calculate curtailment
-        ba_data['Augmented_Demand'] = ba_data['Unified Demand'] + load_addition
+        ba_data['Augmented_Demand'] = ba_data['Demand'] + load_addition
         ba_data['Seasonal_Threshold'] = ba_data['Timestamp'].apply(
             lambda x: self._get_seasonal_threshold(x, ba)
         )
@@ -451,9 +451,9 @@ class CurtailmentAnalyzer:
             'summer_peak_mw': self.seasonal_peaks[ba]['summer'],
             'winter_peak_mw': self.seasonal_peaks[ba]['winter'],
             'load_factor': self.load_factors.get(ba, 0),
-            'avg_demand_mw': ba_data['Unified Demand'].mean(),
-            'min_demand_mw': ba_data['Unified Demand'].min(),
-            'max_demand_mw': ba_data['Unified Demand'].max()
+            'avg_demand_mw': ba_data['Demand'].mean(),
+            'min_demand_mw': ba_data['Demand'].min(),
+            'max_demand_mw': ba_data['Demand'].max()
         }
     
     def analyze_seasonal_patterns(self, ba: str) -> Dict:
@@ -476,7 +476,7 @@ class CurtailmentAnalyzer:
             lambda m: 'summer' if m in SUMMER_MONTHS + SHOULDER_MONTHS['summer'] else 'winter'
         )
         
-        seasonal_stats = ba_data.groupby('Season')['Unified Demand'].agg([
+        seasonal_stats = ba_data.groupby('Season')['Demand'].agg([
             'mean', 'max', 'min', 'std'
         ]).round(1)
         
@@ -553,7 +553,7 @@ def main():
     analyzer = CurtailmentAnalyzer(data_df)
     
     # Analyze top BAs by average demand
-    avg_demand_by_ba = data_df.groupby('Balancing Authority')['Unified Demand'].mean().sort_values(ascending=False)
+    avg_demand_by_ba = data_df.groupby('Balancing Authority')['Demand'].mean().sort_values(ascending=False)
     top_bas = avg_demand_by_ba.head(10).index.tolist()
     
     logging.info(f"Analyzing top {len(top_bas)} BAs by demand: {top_bas}")

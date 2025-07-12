@@ -17,6 +17,9 @@ ENV/
 # Data files
 ba_aggregate_data/*
 plant_data/*
+data/raw/*
+data/cleaned/*
+data/results/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
