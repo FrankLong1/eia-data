@@ -23,10 +23,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 CLEANED_DATA_DIR = DATA_DIR / "cleaned"
 RESULTS_DIR = DATA_DIR / "results"
-OUTPUT_DIR = PROJECT_ROOT / "output"
-
 # Create directories if they don't exist
-for directory in [RAW_DATA_DIR, CLEANED_DATA_DIR, RESULTS_DIR, OUTPUT_DIR]:
+for directory in [RAW_DATA_DIR, CLEANED_DATA_DIR, RESULTS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 # Balancing Authorities (22 from the paper)
@@ -86,15 +84,6 @@ EIA_MAX_RECORDS_PER_REQUEST = 5000  # EIA-imposed maximum records per API reques
 # Data quality thresholds
 MAX_MISSING_HOURS = 24  # Maximum consecutive missing hours to interpolate
 OUTLIER_THRESHOLD_IQR = 3  # IQR multiplier for outlier detection
-
-# Visualization settings
-FIGURE_DPI = 150
-FIGURE_SIZE = (12, 8)
-PLOT_STYLE = 'seaborn-v0_8-darkgrid'
-
-# Analysis output formats
-SAVE_FORMATS = ['png', 'pdf']  # Formats to save plots in
-SAVE_CSV = True  # Whether to save analysis results as CSV
 
 # Logging configuration
 LOG_LEVEL = 'INFO'

@@ -446,14 +446,18 @@ class CurtailmentAnalyzer:
         print("CURTAILMENT ANALYSIS RESULTS")
         print("="*80)
         
+        # Round curtailment rates to avoid floating point precision issues
+        results_df = results_df.copy()
+        results_df['Curtailment_Rate_Rounded'] = results_df['Curtailment_Rate_Pct'].round(2)
+        
         # Get unique curtailment rates and sort them
-        curtailment_rates = sorted(results_df['Curtailment_Rate_Pct'].unique())
+        curtailment_rates = sorted(results_df['Curtailment_Rate_Rounded'].unique())
         
         for rate_pct in curtailment_rates:
             print(f"\n**{rate_pct:.2f}% Curtailment Rate:**")
             
-            # Filter results for this curtailment rate
-            rate_results = results_df[results_df['Curtailment_Rate_Pct'] == rate_pct].copy()
+            # Filter results for this curtailment rate using rounded values
+            rate_results = results_df[results_df['Curtailment_Rate_Rounded'] == rate_pct].copy()
             rate_results = rate_results.sort_values('Max_Load_Addition_GW', ascending=False)
             
             total_gw = 0
@@ -487,6 +491,24 @@ class CurtailmentAnalyzer:
                     ba_name = "Arizona Public Service"
                 elif "Bonneville Power Administration" == ba_name:
                     ba_name = "BPA"
+                elif "Duke Energy Progress East" == ba_name:
+                    ba_name = "Duke Progress"
+                elif "Duke Energy Florida" in ba_name:
+                    ba_name = "Duke Florida"
+                elif "Dominion Energy South Carolina" in ba_name:
+                    ba_name = "Dominion SC"
+                elif "Public Service Company of Colorado" == ba_name:
+                    ba_name = "Colorado PSCo"
+                elif "Salt River Project" in ba_name:
+                    ba_name = "Salt River"
+                elif "PacifiCorp East" == ba_name:
+                    ba_name = "PacifiCorp East"
+                elif "PacifiCorp West" == ba_name:
+                    ba_name = "PacifiCorp West"
+                elif "South Carolina Public Service" in ba_name:
+                    ba_name = "SC Public Service"
+                elif "Portland General Electric" in ba_name:
+                    ba_name = "Portland GE"
                 
                 print(f"- {ba_name}: {load_gw:.1f} GW")
             
@@ -496,9 +518,10 @@ class CurtailmentAnalyzer:
         print(f"Analysis covered {len(results_df['BA'].unique())} balancing authorities")
         print(f"Total result combinations: {len(results_df)}")
         
-        # Show which BAs had optimization failures
+        # Show which BAs had optimization failures (use original config rates)
+        expected_rates = 4  # We expect 4 standard rates: 0.25%, 0.5%, 1%, 5%
         all_bas = set(results_df['BA'].unique())
-        expected_results = len(all_bas) * len(curtailment_rates)
+        expected_results = len(all_bas) * expected_rates
         if len(results_df) < expected_results:
             missing_count = expected_results - len(results_df)
             print(f"Note: {missing_count} optimization(s) failed (rates not achievable)")
