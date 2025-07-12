@@ -17,7 +17,7 @@ import numpy as np
 import logging
 from pathlib import Path
 from typing import Union, Dict
-import config
+from . import config
 
 
 def normalize_datetime(df: pd.DataFrame, datetime_col: str = 'Timestamp') -> pd.DataFrame:

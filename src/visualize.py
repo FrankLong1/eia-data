@@ -65,25 +65,46 @@ DEFAULT_COLORS = plt.cm.Set3(np.linspace(0, 1, 12))
 
 class CurtailmentVisualizer:
     """
-    Comprehensive visualization suite for curtailment analysis results.
+    Publication-ready visualization suite for curtailment analysis results.
     
-    This class provides methods to create publication-ready visualizations
-    of curtailment analysis results, including load duration curves, 
-    headroom comparisons, and seasonal patterns.
+    This class creates all visualizations needed to understand and communicate
+    curtailment analysis findings. Follows the visual style and conventions
+    from the "Rethinking Load Growth" research paper.
+    
+    Key visualization types:
+    - Curtailment headroom charts: Bar charts comparing load addition capacity
+    - Load duration curves: Hourly demand patterns with headroom visualization  
+    - Comparison matrices: Heatmaps of curtailment rates vs. load additions
+    - Seasonal analysis: Summer/winter curtailment pattern breakdowns
+    - Individual BA profiles: Deep-dive analysis for specific regions
+    
+    All plots use:
+    - Consistent color schemes and styling
+    - Publication-quality formatting (300 DPI)
+    - Both PNG and PDF output formats
+    - Descriptive titles, labels, and legends
     """
     
     def __init__(self, output_dir: Union[str, Path] = None):
         """
-        Initialize the visualizer.
+        Initialize the visualizer with output directory and logging setup.
+        
+        Sets up directory structure for organized plot output:
+        - output_dir/plots/: Individual plot files
+        - output_dir/reports/: Combined report documents (future)
         
         Args:
-            output_dir: Directory to save plots. If None, uses current directory.
+            output_dir: Base directory for saving all visualization outputs
+                       If None, saves to current working directory
+                       Typical usage: 'output/analysis_20240712_143022/'
         """
+        # Set up output directory structure
         self.output_dir = Path(output_dir) if output_dir else Path.cwd()
         self.output_dir.mkdir(exist_ok=True)
         
-        # Create subdirectories for different plot types
-        self.plots_dir = self.output_dir / "plots"
+        # Create subdirectories for organized output
+        self.plots_dir = self.output_dir / "plots"  # Individual plot files
+        self.reports_dir = self.output_dir / "reports"  # Future: combined reports
         self.plots_dir.mkdir(exist_ok=True)
         
         self.logger = logging.getLogger(__name__)
@@ -501,21 +522,38 @@ class CurtailmentVisualizer:
                                   ba_data_dict: Dict[str, pd.DataFrame],
                                   ba_demand_stats: Optional[pd.DataFrame] = None) -> Dict[str, Path]:
         """
-        Create a comprehensive visualization report with all key plots.
+        Create a comprehensive visualization report with all key publication-ready plots.
+        
+        This is the main entry point for generating the complete set of visualizations
+        that accompany the curtailment analysis. Creates multiple plot types:
+        
+        1. Curtailment headroom bar charts - comparing load addition capacity across BAs
+        2. Comparison matrices - heatmaps showing curtailment rates vs. load additions
+        3. Load duration curves - showing top BAs' demand patterns and headroom
+        4. Seasonal analysis plots - summer vs winter curtailment patterns
+        5. Individual BA deep-dive plots - detailed analysis for specific regions
+        
+        All plots use consistent styling, colors, and formatting for publication quality.
+        Plots are saved to timestamped output directory with both PNG and PDF formats.
         
         Args:
-            results_df: DataFrame with curtailment analysis results
-            ba_data_dict: Dictionary mapping BA names to their demand data
-            ba_demand_stats: Optional DataFrame with BA demand statistics
+            results_df: Curtailment analysis results with columns like 'BA', 'Max_Load_Addition_GW', 
+                       'Curtailment_Rate', etc. (output from CurtailmentAnalyzer)
+            ba_data_dict: Dictionary mapping BA names to their hourly demand DataFrames
+                         Used for load duration curves and demand pattern analysis
+            ba_demand_stats: Optional pre-computed demand statistics (currently unused)
             
         Returns:
-            Dictionary mapping plot names to their file paths
+            Dictionary mapping plot type names to their saved file paths
+            e.g., {'headroom_chart': Path('output/plots/headroom.png'), ...}
         """
         plot_files = {}
         
         self.logger.info("Creating comprehensive visualization report...")
         
-        # 1. Curtailment headroom bar chart
+        # 1. CURTAILMENT HEADROOM BAR CHART
+        # Shows maximum load addition (GW) for each BA at different curtailment rates
+        # Key plot for comparing BA capacity across regions
         try:
             fig = self.create_curtailment_headroom_chart(results_df)
             plot_files['headroom_chart'] = self._save_plot(fig, 'curtailment_headroom_chart.png')
@@ -523,7 +561,9 @@ class CurtailmentVisualizer:
         except Exception as e:
             self.logger.error(f"Error creating headroom chart: {e}")
         
-        # 2. Comparison matrix
+        # 2. CURTAILMENT COMPARISON MATRIX  
+        # Heatmap showing curtailment rates vs load additions across BAs
+        # Useful for identifying optimal operating points
         try:
             fig = self.create_curtailment_comparison_matrix(results_df)
             plot_files['comparison_matrix'] = self._save_plot(fig, 'curtailment_comparison_matrix.png')

@@ -19,8 +19,7 @@ import pandas as pd
 from src.download import download_all_ba_data
 from src.clean import clean_data_directory
 from src.analyze import CurtailmentAnalyzer
-from src.visualize import CurtailmentVisualizer
-import config
+from src import config
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
@@ -90,9 +89,11 @@ def run_analysis_phase():
     logging.info(f"Loaded {len(combined_data)} records for analysis")
     
     analyzer = CurtailmentAnalyzer(combined_data)
-    results = analyzer.analyze_curtailment_headroom()
+    # Use standard curtailment rates from the research paper
+    curtailment_limits = config.CURTAILMENT_RATES  # [0.0025, 0.005, 0.01, 0.05]
+    results = analyzer.analyze_curtailment_headroom(curtailment_limits=curtailment_limits)
     
-    if results is None:
+    if results is None or results.empty:
         raise RuntimeError("Analysis failed to produce results")
     
     # Save results
@@ -102,32 +103,12 @@ def run_analysis_phase():
     results.to_csv(results_file, index=False)
     
     logging.info(f"Analysis completed for {len(results)} BAs, saved to {results_file}")
+    
+    # Print readable summary of results
+    CurtailmentAnalyzer.print_results_summary(results)
 
 
-def run_visualization_phase():
-    """Create visualizations of analysis results."""
-    logging.info("Starting visualization phase...")
-    
-    results_file = Path(config.RESULTS_DIR) / "curtailment_analysis_results.csv"
-    if not results_file.exists():
-        raise FileNotFoundError("No analysis results found - run analysis phase first")
-    
-    results_df = pd.read_csv(results_file)
-    
-    # Load BA data for visualizations
-    ba_data_dict = {}
-    for file_path in Path(config.CLEANED_DATA_DIR).glob("*.csv"):
-        df = pd.read_csv(file_path)
-        ba_name = (df['Balancing Authority'].iloc[0] if 'Balancing Authority' in df.columns 
-                   else file_path.stem.split('_')[1])
-        ba_data_dict[ba_name] = df
-    
-    logging.info(f"Creating visualizations for {len(ba_data_dict)} BAs")
-    
-    visualizer = CurtailmentVisualizer()
-    plot_files = visualizer.create_comprehensive_report(results_df, ba_data_dict)
-    
-    logging.info(f"Created {len(plot_files)} visualizations")
+# Visualization phase removed - too complicated for now
 
 
 def parse_arguments():
@@ -169,9 +150,15 @@ Examples:
 
 
 def convert_date_format(date_str):
-    """Convert MM-DD-YYYY to YYYY-MM-DD format."""
+    """Convert YYYY-MM-DD to YYYY-MM-DD format (pass through if already correct)."""
     if not date_str:
         return date_str
+    
+    # If already in YYYY-MM-DD format, return as-is
+    if len(date_str.split('-')[0]) == 4:
+        return date_str
+    
+    # Otherwise convert from MM-DD-YYYY to YYYY-MM-DD
     month, day, year = date_str.split('-')
     return f"{year}-{month}-{day}"
 
@@ -188,11 +175,10 @@ def main():
     bas = config.BALANCING_AUTHORITIES if args.all else args.bas
     skip_existing = not args.redownload
     
-    # Run full pipeline
+    # Run analysis pipeline
     run_download_phase(bas, start_date, end_date, skip_existing)
     run_cleaning_phase()
     run_analysis_phase()
-    run_visualization_phase()
     
     logging.info("Pipeline completed successfully!")
 

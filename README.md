@@ -65,8 +65,8 @@ eia-curtailment-analysis/
 ### Basic Commands
 
 ```bash
-# Download and analyze specific BAs
-python run_analysis.py --bas PJM MISO --years 2022 2023
+# Download and analyze specific BAs for 2023
+python run_analysis.py --bas PJM MISO --start 2023-01-01 --end 2023-12-31
 
 # Run analysis on existing data
 python run_analysis.py --analyze-only
@@ -78,7 +78,7 @@ python run_analysis.py --visualize-only
 ### Advanced Usage
 
 ```bash
-# Custom date range
+# Custom date range (YYYY-MM-DD format)
 python run_analysis.py --start 2023-01-01 --end 2023-12-31
 
 # Download only (no analysis)

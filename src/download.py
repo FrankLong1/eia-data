@@ -21,7 +21,7 @@ import time
 import logging
 from typing import Optional
 from pathlib import Path
-import config
+from . import config
 
 
 def _make_request(endpoint: str, params: dict) -> Optional[dict]:

@@ -18,14 +18,15 @@ if not EIA_API_KEY or EIA_API_KEY == 'your_api_key_here':
     EIA_API_KEY = None
 
 # Project directories
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent  # Go up one level from src to project root
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 CLEANED_DATA_DIR = DATA_DIR / "cleaned"
 RESULTS_DIR = DATA_DIR / "results"
+OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # Create directories if they don't exist
-for directory in [RAW_DATA_DIR, CLEANED_DATA_DIR, RESULTS_DIR]:
+for directory in [RAW_DATA_DIR, CLEANED_DATA_DIR, RESULTS_DIR, OUTPUT_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 # Balancing Authorities (22 from the paper)
